@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use inkwell::context::Context;
 use crate::ast::{Package, PackageDef};
-use crate::validate::{Crawler, ExprValidator};
+use crate::validate::{Crawler, ExprDesugar, ExprValidate};
 use crate::cli_args::CliArgs;
 use crate::codegen::Generator;
 use crate::error::{Error, Result};
@@ -60,21 +60,22 @@ impl Driver {
             modules: HashMap::from([(module.def.path.clone(), module)])
         };
 
-        if self.args.print_ast {
-            display_tree::print_tree!(package);
-        }
-
         Ok((package, definitions))
     }
 
     fn validate(&self, package: &mut Package, defs: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let mut validator = Crawler::new(defs.clone())
-            .with(Box::new(ExprValidator::new()));
+            .with(Box::new(ExprDesugar::new()))
+            .with(Box::new(ExprValidate::new()));
 
         validator.visit_package(package);
 
         if validator.error_count() != 0 {
             return Err(Error::StageError(validator.error_count()));
+        }
+
+        if self.args.print_ast {
+            display_tree::print_tree!(*package);
         }
 
         Ok(())

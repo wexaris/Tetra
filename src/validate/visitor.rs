@@ -30,25 +30,25 @@ impl Crawler {
         }
     }
 
-    pub fn visit_package(&mut self, x: &Package) {
+    pub fn visit_package(&mut self, x: &mut Package) {
         assert_eq!(self.ctx.borrow_mut().current_package(), x.def, "mismatched packages!");
         self.for_each_layer(|v, ctx| v.visit_package_pre(x, ctx));
-        for (_, module) in &x.modules {
+        for (_, module) in &mut x.modules {
             self.visit_module(module);
         }
         self.for_each_layer(|v, ctx| v.visit_package_post(x, ctx));
     }
-    pub fn visit_module(&mut self, x: &Module) {
+    pub fn visit_module(&mut self, x: &mut Module) {
         self.ctx.borrow_mut().push_into(&x.def.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_module_pre(x, ctx));
-        for item in &x.items {
+        for item in &mut x.items {
             self.visit_stmt(item);
         }
         self.for_each_layer(|v, ctx| v.visit_module_post(x, ctx));
         self.ctx.borrow_mut().pop();
     }
 
-    pub fn visit_stmt(&mut self, x: &Stmt) {
+    pub fn visit_stmt(&mut self, x: &mut Stmt) {
         self.for_each_layer(|v, ctx| v.visit_stmt_pre(x, ctx));
         match x {
             Stmt::Block(block) => self.visit_block(block),
@@ -65,73 +65,73 @@ impl Crawler {
         }
         self.for_each_layer(|v, ctx| v.visit_stmt_post(x, ctx));
     }
-    pub fn visit_var_decl(&mut self, x: &VarDecl) {
+    pub fn visit_var_decl(&mut self, x: &mut VarDecl) {
         self.for_each_layer(|v, ctx| v.visit_var_decl_pre(x, ctx));
-        self.visit_expr(x.value.as_ref());
+        self.visit_expr(&mut x.value);
         self.ctx.borrow_mut().define_var(x.def.clone());
         self.for_each_layer(|v, ctx| v.visit_var_decl_post(x, ctx));
     }
-    pub fn visit_branch(&mut self, x: &Branch) {
+    pub fn visit_branch(&mut self, x: &mut Branch) {
         self.for_each_layer(|v, ctx| v.visit_branch_pre(x, ctx));
-        self.visit_expr(x.cond.as_ref());
-        self.visit_block(&x.true_block);
-        if let Some(false_block) = &x.false_block {
-            self.visit_block(&false_block);
+        self.visit_expr(&mut x.cond);
+        self.visit_block(&mut x.true_block);
+        if let Some(false_block) = &mut x.false_block {
+            self.visit_block(false_block);
         }
         self.for_each_layer(|v, ctx| v.visit_branch_post(x, ctx));
     }
-    pub fn visit_for_loop(&mut self, x: &ForLoop) {
+    pub fn visit_for_loop(&mut self, x: &mut ForLoop) {
         self.ctx.borrow_mut().push_into(&x.id.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_for_loop_pre(x, ctx));
-        self.visit_stmt(x.init.as_ref());
-        self.visit_expr(x.cond.as_ref());
-        self.visit_expr(x.update.as_ref());
-        self.visit_block(&x.block);
+        self.visit_stmt(&mut x.init);
+        self.visit_expr(&mut x.cond);
+        self.visit_expr(&mut x.update);
+        self.visit_block(&mut x.block);
         self.for_each_layer(|v, ctx| v.visit_for_loop_post(x, ctx));
         self.ctx.borrow_mut().pop();
     }
-    pub fn visit_while_loop(&mut self, x: &WhileLoop) {
+    pub fn visit_while_loop(&mut self, x: &mut WhileLoop) {
         self.ctx.borrow_mut().push_into(&x.id.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_while_loop_pre(x, ctx));
-        self.visit_expr(x.cond.as_ref());
-        self.visit_block(&x.block);
+        self.visit_expr(&mut x.cond);
+        self.visit_block(&mut x.block);
         self.for_each_layer(|v, ctx| v.visit_while_loop_post(x, ctx));
         self.ctx.borrow_mut().pop();
     }
-    pub fn visit_loop(&mut self, x: &Loop) {
+    pub fn visit_loop(&mut self, x: &mut Loop) {
         self.ctx.borrow_mut().push_into(&x.id.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_loop_pre(x, ctx));
-        self.visit_block(&x.block);
+        self.visit_block(&mut x.block);
         self.for_each_layer(|v, ctx| v.visit_loop_post(x, ctx));
         self.ctx.borrow_mut().pop();
     }
-    pub fn visit_continue(&mut self, x: &Continue) {
+    pub fn visit_continue(&mut self, x: &mut Continue) {
         self.for_each_layer(|v, ctx| v.visit_continue_pre(x, ctx));
         self.for_each_layer(|v, ctx| v.visit_continue_post(x, ctx));
     }
-    pub fn visit_break(&mut self, x: &Break) {
+    pub fn visit_break(&mut self, x: &mut Break) {
         self.for_each_layer(|v, ctx| v.visit_break_pre(x, ctx));
         self.for_each_layer(|v, ctx| v.visit_break_post(x, ctx));
     }
-    pub fn visit_return(&mut self, x: &Return) {
+    pub fn visit_return(&mut self, x: &mut Return) {
         self.for_each_layer(|v, ctx| v.visit_return_pre(x, ctx));
-        if let Some(val) = &x.value {
-            self.visit_expr(val.as_ref());
+        if let Some(val) = &mut x.value {
+            self.visit_expr(val);
         }
         self.for_each_layer(|v, ctx| v.visit_return_post(x, ctx));
     }
-    pub fn visit_func_decl(&mut self, x: &FuncDecl) {
+    pub fn visit_func_decl(&mut self, x: &mut FuncDecl) {
         self.ctx.borrow_mut().push_into(&x.def.id.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_func_decl_pre(x, ctx));
         for param in x.def.params.iter() {
             self.ctx.borrow_mut().define_var(param.def.clone());
         }
-        self.visit_block(&x.block);
+        self.visit_block(&mut x.block);
         self.for_each_layer(|v, ctx| v.visit_func_decl_post(x, ctx));
         self.ctx.borrow_mut().pop();
     }
 
-    pub fn visit_expr(&mut self, x: &Expr) {
+    pub fn visit_expr(&mut self, x: &mut Expr) {
         self.for_each_layer(|v, ctx| v.visit_expr_pre(x, ctx));
         match x {
             Expr::VarAccess(sym) => self.visit_var_access(sym),
@@ -143,25 +143,25 @@ impl Crawler {
         }
         self.for_each_layer(|v, ctx| v.visit_expr_post(x, ctx));
     }
-    pub fn visit_var_access(&mut self, x: &SymbolRef) {
+    pub fn visit_var_access(&mut self, x: &mut SymbolRef) {
         self.for_each_layer(|v, ctx| v.visit_var_access_pre(x, ctx));
         self.for_each_layer(|v, ctx| v.visit_var_access_post(x, ctx));
     }
-    pub fn visit_unary_op(&mut self, x: &UnaryOp) {
+    pub fn visit_unary_op(&mut self, x: &mut UnaryOp) {
         self.for_each_layer(|v, ctx| v.visit_unary_op_pre(x, ctx));
-        self.visit_expr(x.val.as_ref());
+        self.visit_expr(&mut x.val);
         self.for_each_layer(|v, ctx| v.visit_unary_op_post(x, ctx));
     }
-    pub fn visit_binary_op(&mut self, x: &BinaryOp) {
+    pub fn visit_binary_op(&mut self, x: &mut BinaryOp) {
         self.for_each_layer(|v, ctx| v.visit_binary_op_pre(x, ctx));
-        self.visit_expr(x.lhs.as_ref());
-        self.visit_expr(x.rhs.as_ref());
+        self.visit_expr(&mut x.lhs);
+        self.visit_expr(&mut x.rhs);
         self.for_each_layer(|v, ctx| v.visit_binary_op_post(x, ctx));
     }
-    pub fn visit_func_call(&mut self, x: &FuncCall) {
+    pub fn visit_func_call(&mut self, x: &mut FuncCall) {
         self.for_each_layer(|v, ctx| v.visit_func_call_pre(x, ctx));
-        for arg in &x.args.items {
-            self.visit_expr(arg.expr.as_ref());
+        for arg in &mut x.args.items {
+            self.visit_expr(&mut arg.expr);
         }
         self.for_each_layer(|v, ctx| v.visit_func_call_post(x, ctx));
     }
@@ -174,17 +174,17 @@ impl Crawler {
         self.for_each_layer(|v, ctx| v.visit_lit_bool_post(x, ctx));
     }
 
-    pub fn visit_block(&mut self, x: &Block) {
+    pub fn visit_block(&mut self, x: &mut Block) {
         self.ctx.borrow_mut().push_into(&x.id.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_block_pre(x, ctx));
-        for item in &x.items {
+        for item in &mut x.items {
             self.visit_stmt(item);
         }
         self.for_each_layer(|v, ctx| v.visit_block_post(x, ctx));
         self.ctx.borrow_mut().pop();
     }
 
-    fn for_each_layer<F: Fn(&mut dyn Visitor, Rc<RefCell<ScopeTree>>) -> Result<()>>(&mut self, f: F) {
+    fn for_each_layer<F: FnMut(&mut dyn Visitor, Rc<RefCell<ScopeTree>>) -> Result<()>>(&mut self, mut f: F) {
         for (_, v) in &mut self.visitors {
             let res = f(v.as_mut(), self.ctx.clone());
             if let Err(e) = res {
@@ -211,48 +211,48 @@ impl Crawler {
 }
 
 pub trait Visitor {
-    fn visit_package_pre(&mut self, _package: &Package, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_package_post(&mut self, _package: &Package, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_module_pre(&mut self, _module: &Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_module_post(&mut self, _module: &Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_stmt_pre(&mut self, _stmt: &Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_stmt_post(&mut self, _stmt: &Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_var_decl_pre(&mut self, _decl: &VarDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_var_decl_post(&mut self, _decl: &VarDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_branch_pre(&mut self, _stmt: &Branch, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_branch_post(&mut self, _stmt: &Branch, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_for_loop_pre(&mut self, _stmt: &ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_for_loop_post(&mut self, _stmt: &ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_while_loop_pre(&mut self, _stmt: &WhileLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_while_loop_post(&mut self, _stmt: &WhileLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_loop_pre(&mut self, _stmt: &Loop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_loop_post(&mut self, _stmt: &Loop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_continue_pre(&mut self, _stmt: &Continue, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_continue_post(&mut self, _stmt: &Continue, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_break_pre(&mut self, _stmt: &Break, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_break_post(&mut self, _stmt: &Break, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_return_pre(&mut self, _stmt: &Return, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_return_post(&mut self, _stmt: &Return, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_decl_pre(&mut self, _decl: &FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_decl_post(&mut self, _decl: &FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_package_pre(&mut self, _package: &mut Package, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_package_post(&mut self, _package: &mut Package, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_module_pre(&mut self, _module: &mut Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_module_post(&mut self, _module: &mut Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_stmt_pre(&mut self, _stmt: &mut Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_stmt_post(&mut self, _stmt: &mut Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_var_decl_pre(&mut self, _decl: &mut VarDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_var_decl_post(&mut self, _decl: &mut VarDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_branch_pre(&mut self, _stmt: &mut Branch, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_branch_post(&mut self, _stmt: &mut Branch, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_for_loop_pre(&mut self, _stmt: &mut ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_for_loop_post(&mut self, _stmt: &mut ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_while_loop_pre(&mut self, _stmt: &mut WhileLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_while_loop_post(&mut self, _stmt: &mut WhileLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_loop_pre(&mut self, _stmt: &mut Loop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_loop_post(&mut self, _stmt: &mut Loop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_continue_pre(&mut self, _stmt: &mut Continue, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_continue_post(&mut self, _stmt: &mut Continue, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_break_pre(&mut self, _stmt: &mut Break, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_break_post(&mut self, _stmt: &mut Break, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_return_pre(&mut self, _stmt: &mut Return, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_return_post(&mut self, _stmt: &mut Return, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_decl_pre(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_decl_post(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
 
-    fn visit_expr_pre(&mut self, _expr: &Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_expr_post(&mut self, _expr: &Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_var_access_pre(&mut self, _sym: &SymbolRef, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_var_access_post(&mut self, _sym: &SymbolRef, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_unary_op_pre(&mut self, _op: &UnaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_unary_op_post(&mut self, _op: &UnaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_binary_op_pre(&mut self, _op: &BinaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_binary_op_post(&mut self, _op: &BinaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_call_pre(&mut self, _call: &FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_call_post(&mut self, _call: &FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_expr_pre(&mut self, _expr: &mut Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_expr_post(&mut self, _expr: &mut Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_var_access_pre(&mut self, _sym: &mut SymbolRef, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_var_access_post(&mut self, _sym: &mut SymbolRef, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_unary_op_pre(&mut self, _op: &mut UnaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_unary_op_post(&mut self, _op: &mut UnaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_binary_op_pre(&mut self, _op: &mut BinaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_binary_op_post(&mut self, _op: &mut BinaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_call_pre(&mut self, _call: &mut FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_call_post(&mut self, _call: &mut FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_number_pre(&mut self, _val: f64, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_number_post(&mut self, _val: f64, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_bool_pre(&mut self, _val: bool, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_bool_post(&mut self, _val: bool, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
 
-    fn visit_block_pre(&mut self, _block: &Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_block_post(&mut self, _block: &Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_block_pre(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_block_post(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
 
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;

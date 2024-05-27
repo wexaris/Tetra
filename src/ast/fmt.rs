@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use display_tree::{AsTree, DisplayTree, Style};
 use display_tree::to_display_tree_ref::ToDisplayTreeRef;
 use crate::ast::*;
@@ -162,7 +161,7 @@ impl DisplayTree for Block {
 }
 
 #[inline]
-fn write_tree_refs<T: DisplayTree>(items: &[Rc<T>], f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+fn write_tree_refs<T: DisplayTree>(items: &[Box<T>], f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
     for (idx, x) in items.iter().enumerate() {
         let item = format!("{}", AsTree::with_style(x.to_display_tree(), style));
         let is_last = idx == items.len() - 1;

@@ -4,14 +4,14 @@ use crate::ast::*;
 use crate::parse::{FileSpan, ItemDef, ScopeTree, TokenType};
 use crate::validate::{Visitor, Result};
 
-pub struct ExprValidator {}
+pub struct ExprValidate {}
 
-impl ExprValidator {
+impl ExprValidate {
     pub fn new() -> Self { Self {} }
 }
 
-impl Visitor for ExprValidator {
-    fn visit_var_decl_post(&mut self, decl: &VarDecl, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+impl Visitor for ExprValidate {
+    fn visit_var_decl_post(&mut self, decl: &mut VarDecl, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
 
         let lhs_ty = decl.def.ty.clone();
@@ -34,7 +34,7 @@ impl Visitor for ExprValidator {
         Ok(())
     }
 
-    fn visit_branch_post(&mut self, stmt: &Branch, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_branch_post(&mut self, stmt: &mut Branch, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
         let expr_ty = stmt.cond.return_type(&ctx);
 
@@ -48,12 +48,12 @@ impl Visitor for ExprValidator {
         Ok(())
     }
 
-    fn visit_for_loop_post(&mut self, _stmt: &ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_for_loop_post(&mut self, _stmt: &mut ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         // TODO:
         Ok(())
     }
 
-    fn visit_while_loop_post(&mut self, stmt: &WhileLoop, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_while_loop_post(&mut self, stmt: &mut WhileLoop, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
         let expr_ty = stmt.cond.return_type(&ctx);
 
@@ -67,11 +67,11 @@ impl Visitor for ExprValidator {
         Ok(())
     }
 
-    fn visit_loop_post(&mut self, _stmt: &Loop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_loop_post(&mut self, _stmt: &mut Loop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         Ok(())
     }
 
-    fn visit_return_post(&mut self, stmt: &Return, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_return_post(&mut self, stmt: &mut Return, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
         
         let func_ty = ctx.current_func().ret;
@@ -89,7 +89,7 @@ impl Visitor for ExprValidator {
         Ok(())
     }
 
-    fn visit_var_access_post(&mut self, sym: &SymbolRef, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_var_access_post(&mut self, sym: &mut SymbolRef, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
         match ctx.find(&sym.path) {
             Some(ItemDef::Var(def)) => {
@@ -106,7 +106,7 @@ impl Visitor for ExprValidator {
         }
     }
 
-    fn visit_unary_op_post(&mut self, op: &UnaryOp, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_unary_op_post(&mut self, op: &mut UnaryOp, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
         match &op.op {
             TokenType::Not => {
@@ -138,7 +138,7 @@ impl Visitor for ExprValidator {
         }
     }
 
-    fn visit_binary_op_post(&mut self, op: &BinaryOp, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_binary_op_post(&mut self, op: &mut BinaryOp, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let ctx = ctx.borrow();
         
         match &op.op {
@@ -247,7 +247,7 @@ impl Visitor for ExprValidator {
         }
     }
 
-    fn visit_func_call_post(&mut self, call: &FuncCall, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_func_call_post(&mut self, call: &mut FuncCall, ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         let defs = ctx.borrow();
 
         if let Some(ItemDef::Func(def)) = defs.find(&call.symbol.path) {

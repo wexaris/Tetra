@@ -148,7 +148,7 @@ impl Parser {
         Module { def, items }
     }
 
-    fn try_parse_stmt(&mut self) -> Option<Rc<Stmt>> {
+    fn try_parse_stmt(&mut self) -> Option<Box<Stmt>> {
         match self.parse_stmt() {
             Ok(item) => Some(item),
             Err(e) => {
@@ -159,61 +159,62 @@ impl Parser {
         }
     }
 
-    fn parse_stmt(&mut self) -> Result<Rc<Stmt>, Log> {
-        match &self.curr_tok.ty {
+    fn parse_stmt(&mut self) -> Result<Box<Stmt>, Log> {
+        let stmt = match &self.curr_tok.ty {
             TokenType::Var => {
                 self.bump();
                 let decl = self.parse_var_decl()?;
-                Ok(Rc::new(Stmt::VarDecl(decl)))
+                Stmt::VarDecl(decl)
             }
             TokenType::Func => {
                 let decl = self.parse_func_decl()?;
-                Ok(Rc::new(Stmt::FuncDecl(decl)))
+                Stmt::FuncDecl(decl)
             }
             TokenType::If => {
                 let stmt = self.parse_branch()?;
-                Ok(Rc::new(Stmt::Branch(stmt)))
+                Stmt::Branch(stmt)
             }
             TokenType::For => {
                 let stmt = self.parse_for_loop()?;
-                Ok(Rc::new(Stmt::ForLoop(stmt)))
+                Stmt::ForLoop(stmt)
             }
             TokenType::While => {
                 let stmt = self.parse_while_loop()?;
-                Ok(Rc::new(Stmt::WhileLoop(stmt)))
+                Stmt::WhileLoop(stmt)
             }
             TokenType::Loop => {
                 let stmt = self.parse_loop()?;
-                Ok(Rc::new(Stmt::Loop(stmt)))
+                Stmt::Loop(stmt)
             }
             TokenType::Continue => {
                 let stmt = self.parse_continue()?;
-                Ok(Rc::new(Stmt::Continue(stmt)))
+                Stmt::Continue(stmt)
             }
             TokenType::Break => {
                 let stmt = self.parse_break()?;
-                Ok(Rc::new(Stmt::Break(stmt)))
+                Stmt::Break(stmt)
             }
             TokenType::Return => {
                 let stmt = self.parse_return()?;
-                Ok(Rc::new(Stmt::Return(stmt)))
+                Stmt::Return(stmt)
             }
             TokenType::LBrace => {
                 let block = self.parse_block()?;
-                Ok(Rc::new(Stmt::Block(block)))
+                Stmt::Block(block)
             }
             TokenType::Semicolon => {
                 crate::log::error(ParseError::DanglingSemi)
                     .with_span(&self.curr_tok.span, &self.source)
                     .handled(self)
-                    .into_result()
+                    .into_result()?
             }
             _ => {
                 let expr = self.parse_expr()?;
                 expect_warn!(self, TokenType::Semicolon);
-                Ok(Rc::new(Stmt::Expr(expr)))
+                Stmt::Expr(expr)
             }
-        }
+        };
+        Ok(Box::new(stmt))
     }
 
     fn parse_var_decl(&mut self) -> Result<VarDecl, Log> {
@@ -247,7 +248,7 @@ impl Parser {
                 let start = self.curr_pos();
                 let id = self.push_define_block(&self.curr_tok.span).unwrap();
 
-                let sub_branch = Rc::new(Stmt::Branch(self.parse_branch()?));
+                let sub_branch = Box::new(Stmt::Branch(self.parse_branch()?));
 
                 self.pop_scope();
                 let block = Block { id, items: vec![sub_branch], span: self.span_from(start) };
@@ -394,11 +395,11 @@ impl Parser {
         Ok(block)
     }
 
-    fn parse_expr(&mut self) -> Result<Rc<Expr>, Log> {
+    fn parse_expr(&mut self) -> Result<Box<Expr>, Log> {
         self.parse_expr_inner(1)
     }
 
-    fn parse_expr_inner(&mut self, prec: u32) -> Result<Rc<Expr>, Log> {
+    fn parse_expr_inner(&mut self, prec: u32) -> Result<Box<Expr>, Log> {
         let start = self.curr_pos();
 
         // Parse the LHS expression
@@ -436,13 +437,13 @@ impl Parser {
             // Save this as the new LHS expression
             let span = self.span_from(start.clone());
             let op = BinaryOp{ op: opinfo.token_type.clone(), lhs, rhs, span };
-            lhs = Rc::new(Expr::BinaryOp(op));
+            lhs = Box::new(Expr::BinaryOp(op));
         }
 
         Ok(lhs)
     }
 
-    fn parse_expr_atom(&mut self, prec: u32) -> Result<Rc<Expr>, Log> {
+    fn parse_expr_atom(&mut self, prec: u32) -> Result<Box<Expr>, Log> {
         let start = self.curr_pos();
 
         // Handle unary NOT or MINUS operations
@@ -462,7 +463,7 @@ impl Parser {
                 // Return unary op expr
                 let span = self.span_from(start);
                 let op = UnaryOp { op: opinfo.token_type.clone(), val, span };
-                return Ok(Rc::new(Expr::UnaryOp(op)));
+                return Ok(Box::new(Expr::UnaryOp(op)));
             }
         }
 
@@ -478,7 +479,7 @@ impl Parser {
                     expect!(self, TokenType::RParen)?;
 
                     let func_call = FuncCall { symbol: path.into(), args, span: self.span_from(start) };
-                    return Ok(Rc::new(Expr::FuncCall(func_call)))
+                    return Ok(Box::new(Expr::FuncCall(func_call)))
                 }
 
                 // Check if variable is defined
@@ -489,17 +490,17 @@ impl Parser {
                         .print();
                 }
 
-                Ok(Rc::new(Expr::VarAccess(path.into())))
+                Ok(Box::new(Expr::VarAccess(path.into())))
             }
             TokenType::NumberVal(val) => {
                 let val = val.clone();
                 self.bump();
-                Ok(Rc::new(Expr::Number(val, self.curr_tok.span.clone())))
+                Ok(Box::new(Expr::Number(val, self.curr_tok.span.clone())))
             }
             TokenType::BoolVal(val) => {
                 let val = val.clone();
                 self.bump();
-                Ok(Rc::new(Expr::Bool(val, self.curr_tok.span.clone())))
+                Ok(Box::new(Expr::Bool(val, self.curr_tok.span.clone())))
             }
             _ => {
                 // we've lost the plot. could be anything

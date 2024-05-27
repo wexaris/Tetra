@@ -140,13 +140,18 @@ pub enum TokenType {
 }
 
 impl TokenType {
+    #[inline]
     pub fn is_eof(&self) -> bool { *self == TokenType::Eof }
+    
+    #[inline]
     pub fn is_valid(&self) -> bool { *self != TokenType::Invalid }
 
+    #[inline]
     pub fn is_unary_op(&self) -> bool {
         matches!(*self, TokenType::Not | TokenType::Plus | TokenType::Minus)
     }
 
+    #[inline]
     pub fn is_binary_op(&self) -> bool {
         matches!(*self,
             TokenType::Dot  |
@@ -162,13 +167,28 @@ impl TokenType {
             TokenType::MulAssign | TokenType::DivAssign | TokenType::ModAssign
         )
     }
-    
+
+    #[inline]
     pub fn is_assign(&self) -> bool {
         matches!(*self,
             TokenType::Assign |
             TokenType::AndAssign | TokenType::OrAssign |
             TokenType::AddAssign | TokenType::SubAssign |
             TokenType::MulAssign | TokenType::DivAssign | TokenType::ModAssign)
+    }
+
+    #[inline]
+    pub fn assign_pre_op(&self) -> Option<TokenType> {
+        match self {
+            TokenType::AndAssign => Some(TokenType::LogicAnd),
+            TokenType::OrAssign => Some(TokenType::LogicOr),
+            TokenType::AddAssign => Some(TokenType::Plus),
+            TokenType::SubAssign => Some(TokenType::Minus),
+            TokenType::MulAssign => Some(TokenType::Star),
+            TokenType::DivAssign => Some(TokenType::Slash),
+            TokenType::ModAssign => Some(TokenType::Percent),
+            _ => None,
+        }
     }
 }
 

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use display_tree::DisplayTree;
-use std::rc::Rc;
 use crate::ast::def::{FuncDef, ModuleDef, PackageDef, VarDef};
 use crate::ast::{Ident, Path, SymbolRef};
 use crate::parse::{ItemDef, ScopeTree, Span, TokenType};
@@ -14,7 +13,7 @@ pub struct Package {
 #[derive(Debug, Clone)]
 pub struct Module {
     pub def: ModuleDef,
-    pub items: Vec<Rc<Stmt>>,
+    pub items: Vec<Box<Stmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +28,7 @@ pub enum Stmt {
     Break(Break),
     Return(Return),
     FuncDecl(FuncDecl),
-    Expr(Rc<Expr>),
+    Expr(Box<Expr>),
 }
 
 impl Stmt {
@@ -53,13 +52,13 @@ impl Stmt {
 #[derive(Debug, Clone)]
 pub struct VarDecl {
     pub def: VarDef,
-    pub value: Rc<Expr>,
+    pub value: Box<Expr>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Branch {
-    pub cond: Rc<Expr>,
+    pub cond: Box<Expr>,
     pub true_block: Block,
     pub false_block: Option<Block>,
     pub span: Span,
@@ -70,11 +69,11 @@ pub struct ForLoop {
     #[ignore_field]
     pub id: Ident,
     #[tree]
-    pub init: Rc<Stmt>,
+    pub init: Box<Stmt>,
     #[tree]
-    pub cond: Rc<Expr>,
+    pub cond: Box<Expr>,
     #[tree]
-    pub update: Rc<Expr>,
+    pub update: Box<Expr>,
     #[tree]
     pub block: Block,
     #[ignore_field]
@@ -86,7 +85,7 @@ pub struct WhileLoop {
     #[ignore_field]
     pub id: Ident,
     #[tree]
-    pub cond: Rc<Expr>,
+    pub cond: Box<Expr>,
     #[tree]
     pub block: Block,
     #[ignore_field]
@@ -117,7 +116,7 @@ pub struct Break {
 
 #[derive(Debug, Clone)]
 pub struct Return {
-    pub value: Option<Rc<Expr>>,
+    pub value: Option<Box<Expr>>,
     pub span: Span,
 }
 
@@ -184,7 +183,7 @@ pub struct UnaryOp {
     #[node_label]
     pub op: TokenType,
     #[tree]
-    pub val: Rc<Expr>,
+    pub val: Box<Expr>,
     #[ignore_field]
     pub span: Span,
 }
@@ -204,9 +203,9 @@ pub struct BinaryOp {
     #[node_label]
     pub op: TokenType,
     #[tree]
-    pub lhs: Rc<Expr>,
+    pub lhs: Box<Expr>,
     #[tree]
-    pub rhs: Rc<Expr>,
+    pub rhs: Box<Expr>,
     #[ignore_field]
     pub span: Span,
 }
@@ -231,7 +230,7 @@ impl BinaryOp {
 #[derive(Debug, Clone)]
 pub struct Block {
     pub id: Ident,
-    pub items: Vec<Rc<Stmt>>,
+    pub items: Vec<Box<Stmt>>,
     pub span: Span,
 }
 
@@ -269,7 +268,7 @@ impl std::ops::DerefMut for Args {
 
 #[derive(Debug, Clone)]
 pub struct Arg {
-    pub expr: Rc<Expr>,
+    pub expr: Box<Expr>,
     pub span: Span,
 }
 

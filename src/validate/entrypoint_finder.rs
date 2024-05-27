@@ -11,7 +11,7 @@ impl EntrypointFinder {
 }
 
 impl Visitor for EntrypointFinder {
-    fn visit_func_decl_post(&mut self, _decl: &FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
+    fn visit_func_decl_post(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> {
         todo!()
     }
 

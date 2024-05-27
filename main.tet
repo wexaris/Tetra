@@ -7,9 +7,9 @@ func main() : Number {
 
     while c != 5  {
         if c < 5 {
-            c = c + 1;
+            c += 1;
         } else {
-            c = c - 1;
+            c -= 1;
         }
     }
 

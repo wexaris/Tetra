@@ -4,7 +4,6 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::{FloatPredicate, IntPredicate, OptimizationLevel};
 use inkwell::module::Module;
-use inkwell::passes::{PassManager, PassManagerSubType};
 use inkwell::support::LLVMString;
 use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
@@ -319,6 +318,7 @@ impl<'ctx> Generator<'ctx> {
     fn compile_binary_op(&self, node: &BinaryOp) -> Option<BasicValueEnum> {
         if node.op.is_assign() {
             assert!(matches!(node.lhs.as_ref(), Expr::VarAccess(_)), "invalid assignment target!");
+            assert_eq!(node.op, TokenType::Assign, "complex assignment should've been desugared!");
 
             if let Expr::VarAccess(sym) = node.lhs.as_ref() {
                 let val = self.compile_expr(&node.rhs).expect("unexpected void expr!");
