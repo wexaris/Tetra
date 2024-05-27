@@ -1,0 +1,22 @@
+
+func main() : Number {
+    var a: Number = 2;
+    var b: Number = 7;
+
+    var c: Number = sum2(a, b);
+
+    while c != 5  {
+        if c < 5 {
+            c = c + 1;
+        } else {
+            c = c - 1;
+        }
+    }
+
+    return c;
+}
+
+func sum2(a: Number, b: Number) : Number {
+    return a + b;
+}
+

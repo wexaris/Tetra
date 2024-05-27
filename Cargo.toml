@@ -1,0 +1,18 @@
+[package]
+name = "tetra"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base-62 = "0.1"
+clap = "4.5.4"
+clap_derive = "4.5.4"
+display_tree = "1.1"
+display_tree_derive = "1.0"
+either = "1.11"
+env_logger = "0.11"
+inkwell = { version = "0.4", features = ["llvm17-0"] }
+itertools = "0.12.1"
+log = "0.4"
+thiserror = "1.0"
+zstd = "0.13"
