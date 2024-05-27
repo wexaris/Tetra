@@ -130,25 +130,24 @@ impl<'ctx> Generator<'ctx> {
         let false_bb = self.ctx.append_basic_block(func, "branch.false");
         let end_bb = self.ctx.append_basic_block(func, "branch.end");
 
+        // Build branch condition
         let cond = self.compile_expr(&node.cond).expect("unexpected void expr!");
         assert!(cond.is_int_value(), "cannot branch on non-boolean values!");
+        self.builder.build_conditional_branch(cond.into_int_value(), true_bb, false_bb).unwrap();
 
-        if node.false_block.is_some() {
-            self.builder.build_conditional_branch(cond.into_int_value(), true_bb, false_bb).unwrap();
-        } else {
-            self.builder.build_conditional_branch(cond.into_int_value(), true_bb, end_bb).unwrap();
-        }
-
+        // Compile true block
         self.builder.position_at_end(true_bb);
         self.compile_block(&node.true_block);
         self.builder.build_unconditional_branch(end_bb).unwrap();
 
+        // Compile false block
         self.builder.position_at_end(false_bb);
         if let Some(false_block) = &node.false_block {
             self.compile_block(&false_block);
         }
         self.builder.build_unconditional_branch(end_bb).unwrap();
 
+        // Exit branch
         self.builder.position_at_end(end_bb);
         self.variables.borrow_mut().pop();
     }
