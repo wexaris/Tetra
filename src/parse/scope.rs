@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
-use crate::ast::{FuncDef, Ident, ModuleDef, PackageDef, Path, Type, VarDef};
+use crate::ast::{FuncDef, Ident, ModuleDef, Path, VarDef};
 use crate::log::Log;
 
 #[derive(Debug)]
@@ -13,13 +13,12 @@ pub struct ScopeTree {
 }
 
 impl ScopeTree {
-    pub fn new(name: String) -> Self {
-        let def = ItemDef::Package(PackageDef::new(name.clone()));
-        let root = Rc::new(RefCell::new(Scope::new(def.clone(),  Weak::new())));
+    pub fn new() -> Self {
+        let root = Rc::new(RefCell::new(Scope::new(ItemDef::Package,  Weak::new())));
         Self {
             curr: Rc::downgrade(&root),
             root,
-            curr_path: vec![def],
+            curr_path: vec![ItemDef::Package],
         }
     }
 
@@ -45,10 +44,6 @@ impl ScopeTree {
         let parent = curr.borrow().parent.clone();
         self.curr = parent;
         self.curr_path.pop();
-    }
-
-    pub fn define_package(&mut self, def: PackageDef) -> Option<ItemDef> {
-        self.define(ItemDef::Package(def))
     }
 
     pub fn define_module(&mut self, def: ModuleDef) -> Option<ItemDef> {
@@ -92,13 +87,6 @@ impl ScopeTree {
         assert!(self.curr.strong_count() > 0, "program scope tracker is out of bounds!");
         let curr = self.curr.upgrade().unwrap();
         let ret = curr.borrow_mut().find_local_scope(name);
-        ret
-    }
-
-    pub fn current_package(&self) -> PackageDef {
-        assert!(self.curr.strong_count() > 0, "program scope tracker is out of bounds!");
-        let curr = self.curr.upgrade().unwrap();
-        let ret = curr.borrow_mut().current_package();
         ret
     }
 
@@ -235,19 +223,6 @@ impl Scope {
         self.scopes.get(name).cloned()
     }
 
-    pub fn current_package(&self) -> PackageDef {
-        match &self.def {
-            ItemDef::Package(def) => def.clone(),
-            _ => {
-                if let Some(parent) = self.parent.upgrade() {
-                    parent.borrow().current_package()
-                } else {
-                    panic!("current package not defined!")
-                }
-            }
-        }
-    }
-
     pub fn current_module(&self) -> ModuleDef {
         match &self.def {
             ItemDef::Module(def) => def.clone(),
@@ -292,7 +267,7 @@ impl Scope {
 
 #[derive(Debug, Clone)]
 pub enum ItemDef {
-    Package(PackageDef),
+    Package,
     Module(ModuleDef),
     Func(FuncDef),
     Var(VarDef),
@@ -302,21 +277,11 @@ pub enum ItemDef {
 impl ItemDef {
     pub fn id(&self) -> Ident {
         match self {
-            ItemDef::Package(def) => Ident::new_initial(def.name.clone()),
+            ItemDef::Package => Ident::new_initial("".to_string()),
             ItemDef::Module(def) => Ident::new_initial(def.name.clone()),
             ItemDef::Func(def) => def.id.clone(),
             ItemDef::Var(def) => def.id.clone(),
             ItemDef::Block(id) => id.clone(),
-        }
-    }
-
-    pub fn ty(&self) -> Option<Type> {
-        match self {
-            ItemDef::Package(_) => None,
-            ItemDef::Module(_) => None,
-            ItemDef::Func(def) => Some(def.ret),
-            ItemDef::Var(def) => Some(def.ty),
-            ItemDef::Block(_) => None,
         }
     }
 }

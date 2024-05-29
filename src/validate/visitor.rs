@@ -31,15 +31,7 @@ impl Crawler {
             error_count: self.error_count,
         }
     }
-
-    pub fn visit_package(&mut self, x: &mut Package) {
-        assert_eq!(self.ctx.borrow_mut().current_package(), x.def, "mismatched packages!");
-        self.for_each_layer(|v, ctx| v.visit_package_pre(x, ctx));
-        for (_, module) in &mut x.modules {
-            self.visit_module(module);
-        }
-        self.for_each_layer(|v, ctx| v.visit_package_post(x, ctx));
-    }
+    
     pub fn visit_module(&mut self, x: &mut Module) {
         self.ctx.borrow_mut().push_into(&x.def.name).unwrap();
         self.for_each_layer(|v, ctx| v.visit_module_pre(x, ctx));
@@ -213,8 +205,6 @@ impl Crawler {
 }
 
 pub trait Visitor {
-    fn visit_package_pre(&mut self, _package: &mut Package, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_package_post(&mut self, _package: &mut Package, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_module_pre(&mut self, _module: &mut Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_module_post(&mut self, _module: &mut Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_stmt_pre(&mut self, _stmt: &mut Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }

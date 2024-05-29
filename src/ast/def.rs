@@ -3,17 +3,6 @@ use crate::ast::{Ident, Params, Path, SymbolName, Type};
 use crate::parse::{ScopeTree, SourceFile, Span};
 
 #[derive(DisplayTree, Debug, Clone, Eq, PartialEq)]
-pub struct PackageDef {
-    pub name: String,
-}
-
-impl PackageDef {
-    pub fn new(name: String) -> Self {
-        Self { name }
-    }
-}
-
-#[derive(DisplayTree, Debug, Clone, Eq, PartialEq)]
 pub struct ModuleDef {
     pub name: String,
     pub path: Path,

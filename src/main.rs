@@ -1,3 +1,4 @@
+use clap::Parser;
 use crate::driver::Driver;
 
 mod ast;
@@ -12,7 +13,7 @@ mod validate;
 fn main() {
     log::init();
 
-    let args = cli_args::parse();
+    let args = cli_args::CliArgs::parse();
 
     if let Err(e) = Driver::run(args) {
         log::error(e).print()

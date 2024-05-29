@@ -21,15 +21,14 @@ impl SymbolName {
     }
 
     fn mangle_path(path: &[ItemDef]) -> String {
-        let path = path.iter()
+        path.iter()
             .map(|item| Self::mangle_path_item(item))
-            .collect::<String>();
-        format!("N{path}")
+            .collect::<String>()
     }
 
     fn mangle_path_item(item: &ItemDef) -> String {
         match item {
-            ItemDef::Package(def) => format!("P{}", Self::mangle_name(&def.name)),
+            ItemDef::Package => "P".to_string(),
             ItemDef::Module(def) => Self::mangle_name(&def.name),
             ItemDef::Func(def) => Self::mangle_name(&def.id.name),
             ItemDef::Var(_) =>

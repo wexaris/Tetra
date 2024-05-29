@@ -702,13 +702,6 @@ impl Parser {
     }
 
     #[inline]
-    fn push_define_package(&mut self, name: String) -> Result<PackageDef, Log> {
-        let def = self.define_package(name)?;
-        self.push_into_scope(&def.name)?;
-        Ok(def)
-    }
-
-    #[inline]
     fn push_define_module(&mut self, name: String, path: Path, source: SourceFile) -> Result<ModuleDef, Log> {
         let def = self.define_module(name, path, source)?;
         self.push_into_scope(&def.name)?;
@@ -729,22 +722,13 @@ impl Parser {
         Ok(id)
     }
 
-    fn define_package(&mut self, name: String) -> Result<PackageDef, Log> {
-        let def = PackageDef::new(name);
-        let replaced = self.scope_tree.borrow_mut().define_package(def.clone());
-        assert!(replaced.is_none(), "package shouldn't cause redefinitions!");
-        Ok(def)
-    }
-
     fn define_module(&mut self, name: String, path: Path, source: SourceFile) -> Result<ModuleDef, Log> {
         let def = ModuleDef::new(name.clone(), path, source);
         let replaced = self.scope_tree.borrow_mut().define_module(def.clone());
 
         if let Some(replaced) = replaced {
             match replaced {
-                ItemDef::Package(def) => {
-                    panic!("package '{}' redefined by module '{}'", def.name, name);
-                },
+                ItemDef::Package => unreachable!("new packages cannot be declared!"),
                 ItemDef::Module(def) => {
                     return crate::log::error(ParseError::PathNameCollision(Ident::new_initial(def.name)))
                         .with_file(&self.source)
@@ -773,9 +757,7 @@ impl Parser {
 
         if let Some(replaced) = replaced {
             match replaced {
-                ItemDef::Package(def) => {
-                    panic!("package '{}' redefined by function '{}'", def.name, id.name);
-                },
+                ItemDef::Package => unreachable!("new packages cannot be declared!"),
                 ItemDef::Module(def) => {
                     panic!("module '{}' redefined by function '{}'", def.name, id.name);
                 }

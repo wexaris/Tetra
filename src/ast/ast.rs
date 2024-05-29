@@ -1,14 +1,7 @@
-use std::collections::HashMap;
 use display_tree::DisplayTree;
-use crate::ast::def::{FuncDef, ModuleDef, PackageDef, VarDef};
-use crate::ast::{Ident, Path, SymbolRef};
+use crate::ast::def::{FuncDef, ModuleDef, VarDef};
+use crate::ast::{Ident, SymbolRef};
 use crate::parse::{ItemDef, ScopeTree, Span, TokenType};
-
-#[derive(Debug, Clone)]
-pub struct Package {
-    pub def: PackageDef,
-    pub modules: HashMap<Path, Module>,
-}
 
 #[derive(Debug, Clone)]
 pub struct Module {

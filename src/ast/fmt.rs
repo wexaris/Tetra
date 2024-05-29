@@ -14,16 +14,6 @@ impl std::fmt::Display for Type {
     }
 }
 
-
-impl DisplayTree for Package {
-    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
-        write_inline(type_name_only::<Self>(), f, style)?;
-        // FIXME: this is horrible. don't copy the whole tree
-        let modules = self.modules.values().cloned().collect::<Vec<_>>();
-        write_trees(&modules, f, style)
-    }
-}
-
 impl DisplayTree for Module {
     fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
         let name = format!("{} ({})", type_name_only::<Self>(), self.def.name);
