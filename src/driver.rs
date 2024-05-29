@@ -72,25 +72,19 @@ impl Driver {
     }
 
     fn generate(&self, module: &Module, defs: Rc<RefCell<ScopeTree>>) -> Result<()> {
-
         let ctx = Context::create();
+        let gen = LLVMGenerator::compile_module(&ctx, &module, defs.clone());
 
-        {
-            let gen = LLVMGenerator::compile_module(&ctx, &module, defs.clone());
-
-            if gen.has_errors() {
-                return Err(Error::StageError(gen.error_count()));
-            }
-
-            if self.args.print_ir {
-                let ir_text = gen.get_module().print_to_string();
-                println!("{ir_text}");
-            }
-
-            let module = gen.get_module();
-            self.build_output(module)?;
+        if gen.has_errors() {
+            return Err(Error::StageError(gen.error_count()));
         }
 
+        if self.args.print_ir {
+            let ir_text = gen.get_module().print_to_string();
+            println!("{ir_text}");
+        }
+        
+        self.build_output(gen.get_module())?;
         self.link()?;
 
         Ok(())

@@ -33,7 +33,7 @@ impl LogHandler for LLVMGenerator<'_> {
 }
 
 impl<'ctx> Generator<'ctx> for LLVMGenerator<'ctx> {
-    fn compile_module(ctx: &'ctx Context, node: &'ctx crate::ast::Module, defs: Rc<RefCell<ScopeTree>>) -> Self {
+    fn compile_module<'m>(ctx: &'ctx Context, node: &'m crate::ast::Module, defs: Rc<RefCell<ScopeTree>>) -> Self {
         let builder = ctx.create_builder();
         let module = ctx.create_module(&node.def.name);
         let mut gen = Self {

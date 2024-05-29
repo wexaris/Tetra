@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use display_tree::{AsTree, DisplayTree, Style};
 use display_tree::to_display_tree_ref::ToDisplayTreeRef;
 use crate::ast::*;

@@ -1,9 +1,11 @@
 
-func main() : Number {
+func main() {
     var a: Number = 2;
     var b: Number = 7;
 
     var c: Number = sum2(a, b);
+
+    print(c);
 
     while c != 5  {
         if c < 5 {
@@ -13,7 +15,9 @@ func main() : Number {
         }
     }
 
-    return c;
+    print(c);
+
+    return;
 }
 
 func sum2(a: Number, b: Number) : Number {

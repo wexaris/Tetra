@@ -246,6 +246,8 @@ pub trait Visitor {
     fn visit_block_pre(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_block_post(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
 
+    #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any;
+    #[allow(dead_code)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
