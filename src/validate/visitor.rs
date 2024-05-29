@@ -5,6 +5,8 @@ use std::rc::Rc;
 use crate::ast::*;
 use crate::parse::ScopeTree;
 
+pub type Result<T> = std::result::Result<T, crate::log::Log>;
+
 pub struct Crawler {
     ctx: Rc<RefCell<ScopeTree>>,
     visitors: HashMap<TypeId, Box<dyn Visitor>>,
@@ -189,7 +191,7 @@ impl Crawler {
             let res = f(v.as_mut(), self.ctx.clone());
             if let Err(e) = res {
                 self.error_count += 1;
-                println!("{e}");
+                e.print();
             }
         }
     }
@@ -257,5 +259,3 @@ pub trait Visitor {
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
-
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;

@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::ast::*;
-use crate::parse::{FileSpan, ItemDef, ScopeTree, TokenType};
+use crate::parse::{ItemDef, ScopeTree, TokenType};
 use crate::validate::{Visitor, Result};
 
 pub struct ExprValidate {}
@@ -19,16 +19,16 @@ impl Visitor for ExprValidate {
         
         if matches!(lhs_ty, Type::Void | Type::Undefined) {
             let module = ctx.current_module();
-            let err_span = decl.span.with_file(&module.source);
-            let err = Error::InvalidVariableType(err_span);
-            return Err(Box::new(err));
+            return crate::log::error(Error::InvalidVariableType)
+                .with_span(&decl.span, &module.source)
+                .into_result();
         }
         
         if lhs_ty != rhs_ty {
             let module = ctx.current_module();
-            let err_span = decl.value.get_span().with_file(&module.source);
-            let err = Error::TypeMismatch(err_span, lhs_ty, rhs_ty);
-            return Err(Box::new(err));
+            return crate::log::error(Error::TypeMismatch(lhs_ty, rhs_ty))
+                .with_span(&decl.span, &module.source)
+                .into_result();
         }
         
         Ok(())
@@ -40,9 +40,9 @@ impl Visitor for ExprValidate {
 
         if expr_ty != Type::Bool {
             let module = ctx.current_module();
-            let err_span = stmt.cond.get_span().with_file(&module.source);
-            let err = Error::TypeMismatch(err_span, Type::Bool, expr_ty);
-            return Err(Box::new(err));
+            return crate::log::error(Error::TypeMismatch(Type::Bool, expr_ty))
+                .with_span(&stmt.span, &module.source)
+                .into_result();
         }
 
         Ok(())
@@ -59,9 +59,9 @@ impl Visitor for ExprValidate {
 
         if expr_ty != Type::Bool {
             let module = ctx.current_module();
-            let err_span = stmt.cond.get_span().with_file(&module.source);
-            let err = Error::TypeMismatch(err_span, Type::Bool, expr_ty);
-            return Err(Box::new(err));
+            return crate::log::error(Error::TypeMismatch(Type::Bool, expr_ty))
+                .with_span(&stmt.span, &module.source)
+                .into_result();
         }
 
         Ok(())
@@ -81,9 +81,9 @@ impl Visitor for ExprValidate {
         
         if ret_ty != func_ty {
             let module = ctx.current_module();
-            let err_span = stmt.span.with_file(&module.source);
-            let err = Error::TypeMismatch(err_span, func_ty, ret_ty);
-            return Err(Box::new(err));
+            return crate::log::error(Error::TypeMismatch(func_ty, ret_ty))
+                .with_span(&stmt.span, &module.source)
+                .into_result();
         }
         
         Ok(())
@@ -99,9 +99,9 @@ impl Visitor for ExprValidate {
             },
             _ => {
                 let module = ctx.current_module();
-                let err_span = sym.path.get_span().with_file(&module.source);
-                let err = Error::UndefinedVariable(err_span, sym.path.clone());
-                Err(Box::new(err))
+                return crate::log::error(Error::UndefinedVariable(sym.path.clone()))
+                    .with_span(&sym.path.get_span(), &module.source)
+                    .into_result();
             },
         }
     }
@@ -113,9 +113,9 @@ impl Visitor for ExprValidate {
                 let expr_ty = op.val.return_type(&ctx);
                 if expr_ty != Type::Bool {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::InvalidOperand(err_span, op.op.clone());
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::InvalidOperand(op.op.clone()))
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 Ok(())
             }
@@ -123,17 +123,17 @@ impl Visitor for ExprValidate {
                 let expr_ty = op.val.return_type(&ctx);
                 if expr_ty != Type::Number {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::InvalidOperand(err_span, op.op.clone());
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::InvalidOperand(op.op.clone()))
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 Ok(())
             }
             _ => {
                 let module = ctx.current_module();
-                let err_span = op.span.with_file(&module.source);
-                let err = Error::InvalidOperand(err_span, op.op.clone());
-                Err(Box::new(err))
+                return crate::log::error(Error::InvalidOperand(op.op.clone()))
+                    .with_span(&op.span, &module.source)
+                    .into_result();
             }
         }
     }
@@ -147,15 +147,15 @@ impl Visitor for ExprValidate {
                 let rhs_ty = op.rhs.return_type(&ctx);
                 if lhs_ty != rhs_ty {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::IncomparableTypes(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::IncomparableTypes)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 if matches!(lhs_ty, Type::Void | Type::Undefined) {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::VoidExpression(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::VoidExpression)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 Ok(())
             }
@@ -164,21 +164,21 @@ impl Visitor for ExprValidate {
                 let rhs_ty = op.rhs.return_type(&ctx);
                 if lhs_ty != rhs_ty {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::IncomparableTypes(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::IncomparableTypes)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 if matches!(lhs_ty, Type::Void | Type::Undefined) {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::VoidExpression(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::VoidExpression)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 if !matches!(lhs_ty, Type::Bool) {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::InvalidOperand(err_span, op.op.clone());
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::InvalidOperand(op.op.clone()))
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 Ok(())
             }
@@ -190,21 +190,21 @@ impl Visitor for ExprValidate {
                 let rhs_ty = op.rhs.return_type(&ctx);
                 if lhs_ty != rhs_ty {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::IncomparableTypes(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::IncomparableTypes)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 if matches!(lhs_ty, Type::Void | Type::Undefined) {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::VoidExpression(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::VoidExpression)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 if !matches!(lhs_ty, Type::Number) {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::InvalidOperand(err_span, op.op.clone());
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::InvalidOperand(op.op.clone()))
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 Ok(())
             }
@@ -216,9 +216,9 @@ impl Visitor for ExprValidate {
                     Expr::VarAccess(_) => {}
                     _ => {
                         let module = ctx.current_module();
-                        let err_span = op.span.with_file(&module.source);
-                        let err = Error::InvalidAssignmentTarget(err_span);
-                        return Err(Box::new(err));
+                        return crate::log::error(Error::InvalidAssignmentTarget)
+                            .with_span(&op.span, &module.source)
+                            .into_result();
                     }
                 }
 
@@ -226,23 +226,23 @@ impl Visitor for ExprValidate {
                 let rhs_ty = op.rhs.return_type(&ctx);
                 if lhs_ty != rhs_ty {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::TypeMismatch(err_span, lhs_ty, rhs_ty);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::TypeMismatch(lhs_ty, rhs_ty))
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 if matches!(lhs_ty, Type::Void | Type::Undefined) {
                     let module = ctx.current_module();
-                    let err_span = op.span.with_file(&module.source);
-                    let err = Error::VoidExpression(err_span);
-                    return Err(Box::new(err));
+                    return crate::log::error(Error::VoidExpression)
+                        .with_span(&op.span, &module.source)
+                        .into_result();
                 }
                 Ok(())
             }
             _ => {
                 let module = ctx.current_module();
-                let err_span = op.span.with_file(&module.source);
-                let err = Error::InvalidOperator(err_span, op.op.clone());
-                Err(Box::new(err))
+                return crate::log::error(Error::InvalidOperator(op.op.clone()))
+                    .with_span(&op.span, &module.source)
+                    .into_result();
             }
         }
     }
@@ -265,9 +265,9 @@ impl Visitor for ExprValidate {
 
                     if expected_ty != found_ty {
                         let module = defs.current_module();
-                        let err_span = arg.span.with_file(&module.source);
-                        let err = Error::TypeMismatch(err_span, expected_ty, found_ty);
-                        return Err(Box::new(err));
+                        return crate::log::error(Error::TypeMismatch(expected_ty, found_ty))
+                            .with_span(&arg.span, &module.source)
+                            .into_result();
                     }
                 }
             }
@@ -275,16 +275,19 @@ impl Visitor for ExprValidate {
             // Check argument count
             if def.params.len() != call.args.len() {
                 let module = defs.current_module();
-                let err_span = call.args.span.with_file(&module.source);
-                let err = Error::ArgumentCountMismatch(err_span, def.params.len(), call.args.len());
-                return Err(Box::new(err));
+                return crate::log::error(Error::ArgumentCountMismatch(def.params.len(), call.args.len()))
+                    .with_span(&call.args.span, &module.source)
+                    .into_result();
             }
+        }
+        else if call.symbol.path.items.first().unwrap().name == "print" {
+            call.symbol.mangled.replace(Some(SymbolName::new("print".to_string())));
         }
         else { // Undefined function
             let module = defs.current_module();
-            let err_span = call.span.with_file(&module.source);
-            let err = Error::UndefinedFunction(err_span, call.symbol.path.clone());
-            return Err(Box::new(err));
+            return crate::log::error(Error::UndefinedFunction(call.symbol.path.clone()))
+                .with_span(&call.args.span, &module.source)
+                .into_result();
         }
 
         Ok(())
@@ -296,33 +299,33 @@ impl Visitor for ExprValidate {
 
 #[derive(thiserror::Error, Debug)]
 enum Error {
-    #[error("{0}: undefined variable: {1}")]
-    UndefinedVariable(FileSpan, Path),
+    #[error("undefined variable: {0}")]
+    UndefinedVariable(Path),
 
-    #[error("{0}: undefined function: {1}")]
-    UndefinedFunction(FileSpan, Path),
+    #[error("undefined function: {0}")]
+    UndefinedFunction(Path),
 
-    #[error("{0}: invalid function arguments; expected {1}, found {2}")]
-    ArgumentCountMismatch(FileSpan, usize, usize),
+    #[error("invalid function arguments; expected {0}, found {1}")]
+    ArgumentCountMismatch(usize, usize),
 
-    #[error("{0}: type mismatch; expected {1}, found {2}")]
-    TypeMismatch(FileSpan, Type, Type),
+    #[error("type mismatch; expected {0}, found {1}")]
+    TypeMismatch(Type, Type),
 
-    #[error("{0}: invalid variable type!")]
-    InvalidVariableType(FileSpan),
+    #[error("invalid variable type!")]
+    InvalidVariableType,
 
-    #[error("{0}: invalid assignment; only variables can be assigned to!")]
-    InvalidAssignmentTarget(FileSpan),
+    #[error("invalid assignment; only variables can be assigned to!")]
+    InvalidAssignmentTarget,
 
-    #[error("{0}: invalid expression; symbol {1} cannot be used as an operator!")]
-    InvalidOperator(FileSpan, TokenType),
+    #[error("invalid expression; symbol {0} cannot be used as an operator!")]
+    InvalidOperator(TokenType),
 
-    #[error("{0}: invalid expression; operator {1} cannot be applied here!")]
-    InvalidOperand(FileSpan, TokenType),
+    #[error("invalid expression; operator {0} cannot be applied here!")]
+    InvalidOperand(TokenType),
 
-    #[error("{0}: invalid expression; expression types cannot be compared!")]
-    IncomparableTypes(FileSpan),
+    #[error("invalid expression; expression types cannot be compared!")]
+    IncomparableTypes,
 
-    #[error("{0}: invalid expression; expression does not return a value!")]
-    VoidExpression(FileSpan),
+    #[error("invalid expression; expression does not return a value!")]
+    VoidExpression,
 }
