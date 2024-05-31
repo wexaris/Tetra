@@ -170,6 +170,10 @@ impl Parser {
                 let decl = self.parse_func_decl()?;
                 Stmt::FuncDecl(decl)
             }
+            TokenType::Struct => {
+                let decl = self.parse_struct_decl()?;
+                Stmt::StructDecl(decl)
+            }
             TokenType::If => {
                 let stmt = self.parse_branch()?;
                 Stmt::Branch(stmt)
@@ -349,26 +353,69 @@ impl Parser {
         let name = self.parse_ident()?;
 
         expect!(self, TokenType::LParen)?;
-        let (params, span) = self.parse_comma_seperated(Self::parse_param, TokenType::RParen)?;
+        let (params, span) = self.parse_comma_seperated(Self::parse_func_param, TokenType::RParen)?;
         let params = Params { items: params, span };
         expect!(self, TokenType::RParen)?;
 
         let ret = if attempt!(self, TokenType::Colon) {
             self.parse_type()?
         } else {
-            Type::Void
+            Type::Void(name.span.clone())
         };
 
         let def = self.push_define_func(name, ret, params).unwrap();
 
         for param in def.params.iter() {
-            self.define_var(param.def.id.clone(), param.def.ty);
+            self.define_var(param.def.id.clone(), param.def.ty.clone());
         }
 
         let block = self.parse_block()?;
 
         self.pop_scope();
         let decl = FuncDecl{ def, block, span: self.span_from(start) };
+        Ok(decl)
+    }
+
+    fn parse_func_param(&mut self) -> Result<Param, Log> {
+        let start = self.curr_pos();
+
+        let name = self.parse_ident()?;
+
+        expect!(self, TokenType::Colon)?;
+        let ty = self.parse_type()?;
+
+        let def = VarDef::new(name, ty);
+        let param = Param { def, span: self.span_from(start) };
+        Ok(param)
+    }
+
+    fn parse_struct_decl(&mut self) -> Result<StructDecl, Log> {
+        let start = self.curr_pos();
+
+        expect!(self, TokenType::Struct)?;
+        let id = self.parse_ident()?;
+
+        expect!(self, TokenType::LBrace)?;
+        let (fields, _) = self.parse_comma_seperated(Self::parse_field_decl, TokenType::RBrace)?;
+        expect!(self, TokenType::RBrace)?;
+
+        let def = self.define_struct(id, fields)?;
+        let decl = StructDecl{ def, span: self.span_from(start) };
+        Ok(decl)
+    }
+
+    fn parse_field_decl(&mut self) -> Result<FieldDecl, Log> {
+        let start = self.curr_pos();
+
+        let is_public = attempt!(self, TokenType::Pub);
+
+        let id = self.parse_ident()?;
+
+        expect!(self, TokenType::Colon)?;
+        let ty = self.parse_type()?;
+
+        let def = VarDef{ id, ty };
+        let decl = FieldDecl{ def, is_public, span: self.span_from(start) };
         Ok(decl)
     }
 
@@ -421,23 +468,49 @@ impl Parser {
             } else {
                 opinfo.precedence
             };
-            let rhs = self.parse_expr_inner(prec)?;
+            let mut rhs = self.parse_expr_inner(prec)?;
 
-            // Validate that assigment is only done on variables
-            // Also checked during validation stage, but it's nice to error quicker if possible
-            if opinfo.token_type.is_assign() {
-                if !matches!(lhs.as_ref(), Expr::VarAccess(_)) {
+            lhs = if opinfo.token_type.is_assign() {
+                // Ensure that assigment is only done on variables
+                if !matches!(lhs.as_ref(), Expr::VarAccess(_) | Expr::FieldAccess(_)) {
                     return crate::log::error(ParseError::InvalidAssignExpression)
                         .with_span(&self.span_from(start.clone()), &self.source)
                         .handled(self)
                         .into_result();
-                }
-            }
+                };
 
-            // Save this as the new LHS expression
-            let span = self.span_from(start.clone());
-            let op = BinaryOp{ op: opinfo.token_type.clone(), lhs, rhs, span };
-            lhs = Box::new(Expr::BinaryOp(op));
+                if opinfo.token_type != TokenType::Assign {
+                    let op = opinfo.token_type.assign_pre_op().unwrap();
+                    let span = rhs.get_span();
+                    let op = BinaryOp { op, lhs: lhs.clone(), rhs, span };
+                    rhs = Box::new(Expr::BinaryOp(op));
+                }
+
+                let span = self.span_from(start.clone());
+                let op = Assign { target: lhs, value: rhs, span };
+                Box::new(Expr::Assign(op))
+            }
+            else if opinfo.token_type == TokenType::Dot {
+                let field = match rhs.as_ref() {
+                    Expr::VarAccess(sym) if sym.path.is_ident() => sym.path.first().unwrap(),
+                    _ => {
+                        return crate::log::error(ParseError::InvalidFieldAccess)
+                            .with_span(&self.span_from(start.clone()), &self.source)
+                            .handled(self)
+                            .into_result();
+                    }
+                };
+
+                let span = self.span_from(start.clone());
+                let op = FieldAccess { item: lhs, field: field.clone(), span,  };
+                Box::new(Expr::FieldAccess(op))
+            }
+            else {
+                // Save this as the new LHS expression
+                let span = self.span_from(start.clone());
+                let op = BinaryOp{ op: opinfo.token_type, lhs, rhs, span };
+                Box::new(Expr::BinaryOp(op))
+            }
         }
 
         Ok(lhs)
@@ -458,23 +531,23 @@ impl Parser {
                 } else {
                     opinfo.precedence
                 };
-                let val = self.parse_expr_inner(prec)?;
+                let value = self.parse_expr_inner(prec)?;
 
                 // Return unary op expr
                 let span = self.span_from(start);
-                let op = UnaryOp { op: opinfo.token_type.clone(), val, span };
+                let op = UnaryOp { op: opinfo.token_type.clone(), value, span };
                 return Ok(Box::new(Expr::UnaryOp(op)));
             }
         }
 
         match &self.curr_tok.ty {
-            // Variable access or function call
+            // Variable access | Function call | Struct init
             TokenType::Id(_) => {
                 let path = self.parse_path()?;
 
                 // Handle function call
                 if attempt!(self, TokenType::LParen) {
-                    let (args, span) = self.parse_comma_seperated(Self::parse_arg, TokenType::RParen)?;
+                    let (args, span) = self.parse_comma_seperated(Self::parse_func_arg, TokenType::RParen)?;
                     let args = Args { items: args, span };
                     expect!(self, TokenType::RParen)?;
 
@@ -482,12 +555,15 @@ impl Parser {
                     return Ok(Box::new(Expr::FuncCall(func_call)))
                 }
 
-                // Check if variable is defined
-                if !self.has_defined_id(&path) {
-                    crate::log::error(ParseError::UndefinedVariable(path.clone()))
-                        .with_span(&path.get_span(), &self.source)
-                        .handled(self)
-                        .print();
+                // Handle struct init
+                if attempt!(self, TokenType::LBrace) {
+                    let (fields, _) = self.parse_comma_seperated(Self::parse_field_init, TokenType::RBrace)?;
+                    expect!(self, TokenType::RBrace)?;
+
+                    let ty_span = path.get_span();
+                    let ty = Type::Struct(path.into(), ty_span);
+                    let struct_init = StructInit { ty, fields, span: self.span_from(start) };
+                    return Ok(Box::new(Expr::StructInit(struct_init)))
                 }
 
                 Ok(Box::new(Expr::VarAccess(path.into())))
@@ -510,6 +586,59 @@ impl Parser {
         }
     }
 
+    fn parse_func_arg(&mut self) -> Result<Arg, Log> {
+        let expr = self.parse_expr()?;
+        let arg = Arg { span: expr.get_span(), expr };
+        Ok(arg)
+    }
+
+    fn parse_field_init(&mut self) -> Result<FieldInit, Log> {
+        let start = self.curr_pos();
+
+        let id = self.parse_ident()?;
+        let value = match attempt!(self, TokenType::Colon) {
+            true => self.parse_expr()?,
+            false => Box::new(Expr::VarAccess(id.clone().into())),
+        };
+
+        let field = FieldInit { id, value, span: self.span_from(start) };
+        Ok(field)
+    }
+
+    fn parse_type(&mut self) -> Result<Type, Log> {
+        let start = self.curr_pos();
+        match &self.curr_tok.ty {
+            TokenType::LParen => {
+                self.bump();
+                if attempt!(self, TokenType::RParen) {
+                    Ok(Type::Void(self.span_from(start)))
+                }
+                else {
+                    let ty = self.parse_type()?;
+                    expect!(self, TokenType::RParen)?;
+                    Ok(ty)
+                }
+            },
+            TokenType::Id(_) => {
+                let path = self.parse_path()?;
+                Ok(Type::Struct(path.into(), self.span_from(start)))
+            }
+            TokenType::Number => {
+                self.bump();
+                Ok(Type::Number(self.span_from(start)))
+            },
+            TokenType::Bool => {
+                self.bump();
+                Ok(Type::Bool(self.span_from(start)))
+            },
+            _ => {
+                // we've lost the plot. could be anything
+                let err = self.expectation_err(&[], Some("a type")).emit();
+                Err(err)
+            }
+        }
+    }
+
     fn parse_path(&mut self) -> Result<Path, Log> {
         let mut path = Path::new(vec![]);
 
@@ -526,25 +655,6 @@ impl Parser {
         Ok(path)
     }
 
-    fn parse_param(&mut self) -> Result<Param, Log> {
-        let start = self.curr_pos();
-
-        let name = self.parse_ident()?;
-
-        expect!(self, TokenType::Colon)?;
-        let ty = self.parse_type()?;
-
-        let def = VarDef::new(name, ty);
-        let param = Param { def, span: self.span_from(start) };
-        Ok(param)
-    }
-
-    fn parse_arg(&mut self) -> Result<Arg, Log> {
-        let expr = self.parse_expr()?;
-        let arg = Arg { span: expr.get_span(), expr };
-        Ok(arg)
-    }
-
     fn parse_ident(&mut self) -> Result<Ident, Log> {
         match &self.curr_tok.ty {
             TokenType::Id(name) => {
@@ -554,35 +664,6 @@ impl Parser {
             }
             _ => {
                 let err = self.expectation_err(&[], Some("an identifier")).emit();
-                Err(err)
-            }
-        }
-    }
-
-    fn parse_type(&mut self) -> Result<Type, Log> {
-        match &self.curr_tok.ty {
-            TokenType::LParen => {
-                self.bump();
-                if attempt!(self, TokenType::RParen) {
-                    Ok(Type::Void)
-                }
-                else {
-                    let ty = self.parse_type()?;
-                    expect!(self, TokenType::RParen)?;
-                    Ok(ty)
-                }
-            },
-            TokenType::Number => {
-                self.bump();
-                Ok(Type::Number)
-            },
-            TokenType::Bool => {
-                self.bump();
-                Ok(Type::Bool)
-            },
-            _ => {
-                // we've lost the plot. could be anything
-                let err = self.expectation_err(&[], Some("a type")).emit();
                 Err(err)
             }
         }
@@ -628,9 +709,11 @@ impl Parser {
 
     #[inline]
     fn skip_to_next_stmt(&mut self) {
-        while !matches!(self.curr_tok.ty, TokenType::Var | TokenType::Func |
+        while !matches!(self.curr_tok.ty,
+            TokenType::Var | TokenType::Func | TokenType::Struct |
             TokenType::If | TokenType::For | TokenType::While | TokenType::Loop |
-            TokenType::Continue | TokenType::Break | TokenType::Return | TokenType::Eof)
+            TokenType::Continue | TokenType::Break | TokenType::Return |
+            TokenType::Eof)
         {
             self.bump();
         }
@@ -722,62 +805,31 @@ impl Parser {
         Ok(id)
     }
 
+    #[inline]
     fn define_module(&mut self, name: String, path: Path, source: SourceFile) -> Result<ModuleDef, Log> {
         let def = ModuleDef::new(name.clone(), path, source);
         let replaced = self.scope_tree.borrow_mut().define_module(def.clone());
-
-        if let Some(replaced) = replaced {
-            match replaced {
-                ItemDef::Package => unreachable!("new packages cannot be declared!"),
-                ItemDef::Module(def) => {
-                    return crate::log::error(ParseError::PathNameCollision(Ident::new_initial(def.name)))
-                        .with_file(&self.source)
-                        .handled(self)
-                        .into_result();
-                }
-                ItemDef::Func(def) => {
-                    return crate::log::error(ParseError::PathNameCollision(def.id))
-                        .with_file(&self.source)
-                        .into_result();
-                }
-                ItemDef::Var(def) => {
-                    panic!("variable '{}' redefined by module '{}'", def.id.name, name);
-                }
-                ItemDef::Block(def) => {
-                    panic!("block '{}' redefined by module '{}'", def.name, name);
-                }
-            }
-        }
+        self.check_item_def_collision(&Span::initial(), replaced)?;
         Ok(def)
     }
 
+    #[inline]
+    fn define_struct(&mut self, id: Ident, fields: Vec<FieldDecl>) -> Result<StructDef, Log> {
+        let def = StructDef::new(id.clone(), fields, &self.scope_tree.borrow());
+        let replaced = self.scope_tree.borrow_mut().define_struct(def.clone());
+        self.check_item_def_collision(&id.span, replaced)?;
+        Ok(def)
+    }
+
+    #[inline]
     fn define_func(&mut self, id: Ident, ret: Type, params: Params) -> Result<FuncDef, Log> {
         let def = FuncDef::new(id.clone(), ret, params, &self.scope_tree.borrow());
         let replaced = self.scope_tree.borrow_mut().define_func(def.clone());
-
-        if let Some(replaced) = replaced {
-            match replaced {
-                ItemDef::Package => unreachable!("new packages cannot be declared!"),
-                ItemDef::Module(def) => {
-                    panic!("module '{}' redefined by function '{}'", def.name, id.name);
-                }
-                ItemDef::Func(def) => {
-                    return crate::log::error(ParseError::PathNameCollision(def.id))
-                        .with_span(&id.span, &self.source)
-                        .handled(self)
-                        .into_result();
-                }
-                ItemDef::Var(def) => {
-                    panic!("variable '{}' redefined by function '{}'", def.id.name, id.name);
-                }
-                ItemDef::Block(def) => {
-                    panic!("block '{}' redefined by function '{}'", def.name, id.name);
-                }
-            }
-        }
+        self.check_item_def_collision(&id.span, replaced)?;
         Ok(def)
     }
 
+    #[inline]
     fn define_block(&self, span: &Span) -> Ident {
         let id = Ident::new_unnamed(span);
         let replaced = self.scope_tree.borrow_mut().define_block(id.clone());
@@ -789,12 +841,41 @@ impl Parser {
     fn define_var(&self, id: Ident, ty: Type) -> VarDef {
         let def = VarDef::new(id, ty);
         self.scope_tree.borrow_mut().define_var(def.clone());
+        // allow redefinitions by local variables
         def
     }
 
-    #[inline]
-    fn has_defined_id(&self, path: &Path) -> bool {
-        self.scope_tree.borrow_mut().contains(path)
+    fn check_item_def_collision(&self, span: &Span, replaced: Option<ItemDef>) -> Result<(), Log> {
+        if let Some(replaced) = replaced {
+            match replaced {
+                ItemDef::Package => unreachable!("new packages cannot be declared!"),
+                ItemDef::Module(def) => {
+                    return crate::log::error(ParseError::PathNameCollision(Ident::new_initial(def.name)))
+                        .with_file(&self.source)
+                        .handled(self)
+                        .into_result();
+                }
+                ItemDef::Struct(def) => {
+                    return crate::log::error(ParseError::PathNameCollision(def.id))
+                        .with_span(&span, &self.source)
+                        .handled(self)
+                        .into_result();
+                }
+                ItemDef::Func(def) => {
+                    return crate::log::error(ParseError::PathNameCollision(def.id))
+                        .with_span(&span, &self.source)
+                        .handled(self)
+                        .into_result();
+                }
+                ItemDef::Var(def) => {
+                    unreachable!("variable '{}' definition collision!", def.id.name);
+                }
+                ItemDef::Block(def) => {
+                    unreachable!("variable '{}' definition collision", def.name);
+                }
+            }
+        }
+        Ok(())
     }
 
     #[inline]

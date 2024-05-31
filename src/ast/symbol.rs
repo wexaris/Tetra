@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::fmt::Formatter;
 use crate::ast::{Ident, Path};
 use crate::parse::{ItemDef, ScopeTree};
@@ -30,6 +29,7 @@ impl SymbolName {
         match item {
             ItemDef::Package => "P".to_string(),
             ItemDef::Module(def) => Self::mangle_name(&def.name),
+            ItemDef::Struct(def) => Self::mangle_name(&def.id.name),
             ItemDef::Func(def) => Self::mangle_name(&def.id.name),
             ItemDef::Var(_) =>
                 unreachable!("paths can't contain variables!"),
@@ -56,11 +56,16 @@ impl std::fmt::Display for SymbolName {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SymbolRef {
     pub path: Path,
-    pub mangled: RefCell<Option<SymbolName>>,
+    pub mangled: Option<SymbolName>,
 }
 
+impl From<Ident> for SymbolRef {
+    fn from(id: Ident) -> Self {
+        Self { path: id.into(), mangled: None }
+    }
+}
 impl From<Path> for SymbolRef {
     fn from(path: Path) -> Self {
-        Self { path, mangled: RefCell::new(None) }
+        Self { path, mangled: None }
     }
 }

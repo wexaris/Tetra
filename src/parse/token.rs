@@ -94,6 +94,8 @@ pub enum TokenType {
     // Keywords
     Var,
     Func,
+    Struct,
+    Pub,
     
     If,
     Else,

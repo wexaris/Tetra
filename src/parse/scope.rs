@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
-use crate::ast::{FuncDef, Ident, ModuleDef, Path, VarDef};
+use crate::ast::{FuncDef, Ident, ModuleDef, Path, StructDef, VarDef};
 use crate::log::Log;
 
 #[derive(Debug)]
@@ -49,30 +49,23 @@ impl ScopeTree {
     pub fn define_module(&mut self, def: ModuleDef) -> Option<ItemDef> {
         self.define(ItemDef::Module(def))
     }
-
+    pub fn define_struct(&mut self, def: StructDef) -> Option<ItemDef> {
+        self.define(ItemDef::Struct(def))
+    }
     pub fn define_func(&mut self, def: FuncDef) -> Option<ItemDef> {
         self.define(ItemDef::Func(def))
     }
-
-    pub fn define_block(&mut self, id: Ident) -> Option<ItemDef> {
-        self.define(ItemDef::Block(id))
-    }
-
     pub fn define_var(&mut self, def: VarDef) -> Option<ItemDef> {
         self.define(ItemDef::Var(def))
+    }
+    pub fn define_block(&mut self, id: Ident) -> Option<ItemDef> {
+        self.define(ItemDef::Block(id))
     }
 
     fn define(&mut self, def: ItemDef) -> Option<ItemDef> {
         assert!(self.curr.strong_count() > 0, "program scope tracker is out of bounds!");
         let curr = self.curr.upgrade().unwrap();
         let ret = curr.borrow_mut().define(def, |def| self.new_scope(def));
-        ret
-    }
-
-    pub fn contains(&self, path: &Path) -> bool {
-        assert!(self.curr.strong_count() > 0, "program scope tracker is out of bounds!");
-        let curr = self.curr.upgrade().unwrap();
-        let ret = curr.borrow_mut().contains(path);
         ret
     }
 
@@ -144,7 +137,7 @@ impl Scope {
     }
 
     pub fn define<F: Fn(ItemDef) -> Rc<RefCell<Scope>>>(&mut self, def: ItemDef, f: F) -> Option<ItemDef> {
-        if matches!(def, ItemDef::Var(_)) {
+        if matches!(def, ItemDef::Struct(_) | ItemDef::Var(_)) {
             let id = def.id();
             let replaced_def = self.defs.insert(id.name.clone(), def.clone());
             replaced_def
@@ -163,32 +156,6 @@ impl Scope {
             assert!(replaced_scope.is_none(), "scope has been overriden by {def:?}");
             let replaced_def = self.defs.insert(id.name.clone(), def.clone());
             replaced_def
-        }
-    }
-
-    pub fn contains(&self, path: &Path) -> bool {
-        if self.contains_local(&path.items) {
-            return true;
-        }
-        if let Some(parent) = self.parent.upgrade() {
-            return parent.borrow().contains(path);
-        }
-        false
-    }
-
-    fn contains_local(&self, path: &[Ident]) -> bool {
-        assert!(path.len() > 0, "Scope path has no elements!");
-        let id = path.first();
-        match path.len() {
-            0 => false,
-            1 => self.defs.contains_key(&id.unwrap().name),
-            _ => {
-                if let Some(def) = self.scopes.get(&id.unwrap().name) {
-                    let sub_path = &path[1..];
-                    return def.borrow().contains_local(sub_path);
-                }
-                false
-            }
         }
     }
 
@@ -269,6 +236,7 @@ impl Scope {
 pub enum ItemDef {
     Package,
     Module(ModuleDef),
+    Struct(StructDef),
     Func(FuncDef),
     Var(VarDef),
     Block(Ident),
@@ -279,6 +247,7 @@ impl ItemDef {
         match self {
             ItemDef::Package => Ident::new_initial("".to_string()),
             ItemDef::Module(def) => Ident::new_initial(def.name.clone()),
+            ItemDef::Struct(def) => def.id.clone(),
             ItemDef::Func(def) => def.id.clone(),
             ItemDef::Var(def) => def.id.clone(),
             ItemDef::Block(id) => id.clone(),

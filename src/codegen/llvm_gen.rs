@@ -1,13 +1,14 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use inkwell::module::Module;
 use inkwell::support::LLVMString;
-use inkwell::types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, PointerType, StructType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue, PointerValue};
-use log::Level;
+use itertools::Itertools;
 use crate::ast::*;
 use crate::codegen::gen::Generator;
 use crate::codegen::stacked_map::StackedMap;
@@ -18,15 +19,15 @@ pub struct LLVMGenerator<'ctx> {
     ctx: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
-    variables: RefCell<StackedMap<ItemData<'ctx>>>,
+    types: HashMap<SymbolName, (StructDef, StructType<'ctx>)>,
+    variables: StackedMap<ItemData<'ctx>>,
     error_count: RefCell<usize>,
 }
 
 impl LogHandler for LLVMGenerator<'_> {
     fn on_emit(&self, log: &mut Log) -> bool {
-        match log.level {
-            Level::Error => *self.error_count.borrow_mut() += 1,
-            _ => {}
+        if log.is_error() {
+            *self.error_count.borrow_mut() += 1
         }
         true
     }
@@ -40,7 +41,8 @@ impl<'ctx> Generator<'ctx> for LLVMGenerator<'ctx> {
             ctx,
             module,
             builder,
-            variables: RefCell::new(StackedMap::new()),
+            types: HashMap::new(),
+            variables: StackedMap::new(),
             error_count: RefCell::new(0),
         };
 
@@ -61,7 +63,7 @@ impl<'ctx> Generator<'ctx> for LLVMGenerator<'ctx> {
 }
 
 impl<'ctx> LLVMGenerator<'ctx> {
-    fn precompile_static_defs(&self, node: &crate::ast::Module, defs: Rc<RefCell<ScopeTree>>) {
+    fn precompile_static_defs(&mut self, node: &crate::ast::Module, defs: Rc<RefCell<ScopeTree>>) {
         let root = defs.borrow().get_root();
         let module = root.borrow()
             .find_local_scope(&node.def.name)
@@ -111,14 +113,17 @@ impl<'ctx> LLVMGenerator<'ctx> {
         }
     }
 
-    fn precompile_static_defs_recursive(&self, scope: &Rc<RefCell<Scope>>) {
+    fn precompile_static_defs_recursive(&mut self, scope: &Rc<RefCell<Scope>>) {
         let scope = scope.borrow();
         for (_, def) in scope.iter() {
             match def {
                 ItemDef::Package => unreachable!("packages cannot be defined within one another!"),
                 ItemDef::Module(_) => unreachable!("modules cannot be defined within one another!"),
+                ItemDef::Struct(def) => {
+                    self.compile_struct_def(def);
+                }
                 ItemDef::Func(def) => {
-                    self.compile_func_prototype(def.clone());
+                    self.compile_func_prototype(def);
                     let scope = scope.find_local_scope(&def.id.name).unwrap();
                     self.precompile_static_defs_recursive(&scope);
                 }
@@ -133,9 +138,12 @@ impl<'ctx> LLVMGenerator<'ctx> {
         }
     }
 
-    fn compile_stmt(&self, node: &Stmt) {
+    fn compile_stmt(&mut self, node: &Stmt) {
         match node {
             Stmt::Block(stmt) => self.compile_block(stmt),
+            Stmt::VarDecl(stmt) => self.compile_var_decl(stmt),
+            Stmt::FuncDecl(stmt) => { self.compile_func_decl(stmt); },
+            Stmt::StructDecl(_) => { /* Handled by precompile */ },
             Stmt::Branch(stmt) => self.compile_branch(stmt),
             Stmt::ForLoop(_) => {}
             Stmt::WhileLoop(stmt) => self.compile_while_loop(stmt),
@@ -143,23 +151,121 @@ impl<'ctx> LLVMGenerator<'ctx> {
             Stmt::Continue(_) => {}
             Stmt::Break(_) => {}
             Stmt::Return(stmt) => self.compile_return(stmt),
-            Stmt::VarDecl(stmt) => self.compile_var_decl(stmt),
-            Stmt::FuncDecl(stmt) => { self.compile_func_decl(stmt); },
             Stmt::Expr(expr) => { self.compile_expr(&expr); },
         }
     }
 
     #[inline]
-    fn compile_block(&self, node: &Block) {
-        self.variables.borrow_mut().push();
+    fn compile_block(&mut self, node: &Block) {
+        self.variables.push();
         for item in &node.items {
             self.compile_stmt(&item);
         }
-        self.variables.borrow_mut().pop();
+        self.variables.pop();
     }
 
-    fn compile_branch(&self, node: &Branch) {
-        self.variables.borrow_mut().push();
+    fn compile_var_decl(&mut self, node: &VarDecl) {
+        let alloc = match node.value.as_ref() {
+            Expr::StructInit(expr) => {
+                let alloc = self.compile_struct_init(&expr);
+                alloc.set_name(&node.def.id.name);
+                alloc
+            },
+            expr => {
+                let val = self.compile_expr(&expr).expect("unexpected void expr!");
+
+                let func = self.get_parent_func().unwrap();
+                let alloc = self.build_entry_block_alloca(func, &node.def.ty, &node.def.id.name);
+
+                self.builder.build_store(alloc, val).unwrap();
+                alloc
+            }
+        };
+
+        let data = ItemData { ty: node.def.ty.clone(), ptr: alloc };
+        self.variables.insert(node.def.id.name.clone(), data);
+    }
+
+    fn compile_func_prototype(&mut self, def: &FuncDef) -> FunctionValue<'ctx> {
+        // Get argument types
+        let args_meta = def.params.items.iter()
+            .map(|arg| arg.def.ty.llvm_type_basic(self.ctx).into())
+            .collect::<Vec<BasicMetadataTypeEnum>>();
+
+        // Get function return type
+        let fn_ty = if def.ret.is_void() {
+            self.ctx.void_type().fn_type(args_meta.as_slice(), false)
+        } else {
+            def.ret.llvm_type_basic(self.ctx).fn_type(args_meta.as_slice(), false)
+        };
+
+        // Register function with module
+        let fn_val = self.module.add_function(def.mangled.as_str(), fn_ty, None);
+
+        // Set argument names for debugging
+        for (i, arg) in fn_val.get_param_iter().enumerate() {
+            let name = &def.params[i].def.id.name;
+            arg.set_name(name.as_str());
+        }
+
+        fn_val
+    }
+
+    fn compile_func_decl(&mut self, node: &FuncDecl) -> Option<FunctionValue<'ctx>> {
+        // Retrieve function prototype
+        let func = self.get_function(&node.def.mangled)
+            .expect("function prototypes should have already been compiled!");
+
+        // Add function block
+        let entry = self.ctx.append_basic_block(func, "entry");
+        self.builder.position_at_end(entry);
+
+        self.variables.push();
+
+        // Set up param variables
+        for (i, val) in func.get_param_iter().enumerate() {
+            let param = &node.def.params[i].def;
+            let alloc = self.build_entry_block_alloca(func, &param.ty, &param.id.name);
+            self.builder.build_store(alloc, val).unwrap();
+
+            let data = ItemData { ty: param.ty.clone(), ptr: alloc };
+            self.variables.insert(param.id.name.clone(), data);
+        }
+
+        // Compile block
+        self.compile_block(&node.block);
+
+        self.variables.pop();
+
+        // Validate function
+        if !func.verify(true) {
+            crate::log::error(Error::InvalidFunction(node.def.id.clone()))
+                .handled(self)
+                .print();
+            func.print_to_stderr();
+            unsafe { func.delete() }
+            return None;
+        }
+
+        Some(func)
+    }
+
+    fn compile_struct_def(&mut self, node: &StructDef) -> StructType<'ctx> {
+        // Get field types
+        let field_types = node.fields.iter()
+            .map(|field| field.def.ty.llvm_type_basic(self.ctx))
+            .collect::<Vec<BasicTypeEnum>>();
+
+        let struct_ty = self.ctx.opaque_struct_type(node.mangled.as_str());
+        struct_ty.set_body(&field_types, false);
+
+        self.types.insert(node.mangled.clone(), (node.clone(), struct_ty.clone()));
+
+        struct_ty
+    }
+
+    fn compile_branch(&mut self, node: &Branch) {
+        self.variables.push();
 
         let func = self.get_parent_func().unwrap();
         let true_bb = self.ctx.append_basic_block(func, "branch.true");
@@ -185,11 +291,11 @@ impl<'ctx> LLVMGenerator<'ctx> {
 
         // Exit branch
         self.builder.position_at_end(end_bb);
-        self.variables.borrow_mut().pop();
+        self.variables.pop();
     }
 
-    fn compile_while_loop(&self, node: &WhileLoop) {
-        self.variables.borrow_mut().push();
+    fn compile_while_loop(&mut self, node: &WhileLoop) {
+        self.variables.push();
 
         let func = self.get_parent_func().unwrap();
         let start_bb = self.ctx.append_basic_block(func, "loop.start");
@@ -208,11 +314,11 @@ impl<'ctx> LLVMGenerator<'ctx> {
         self.builder.build_unconditional_branch(start_bb).unwrap();
 
         self.builder.position_at_end(end_bb);
-        self.variables.borrow_mut().pop();
+        self.variables.pop();
     }
 
-    fn compile_loop(&self, node: &Loop) {
-        self.variables.borrow_mut().push();
+    fn compile_loop(&mut self, node: &Loop) {
+        self.variables.push();
 
         let func = self.get_parent_func().unwrap();
         let start_bb = self.ctx.append_basic_block(func, "loop.start");
@@ -226,11 +332,11 @@ impl<'ctx> LLVMGenerator<'ctx> {
         let end_bb = self.ctx.append_basic_block(func, "loop.end");
 
         self.builder.position_at_end(end_bb);
-        self.variables.borrow_mut().pop();
+        self.variables.pop();
     }
 
     #[inline]
-    fn compile_return(&self, node: &Return) {
+    fn compile_return(&mut self, node: &Return) {
         if let Some(val) = &node.value {
             let val = self.compile_expr(val).expect("unexpected void expr!");
             self.builder.build_return(Some(&val)).unwrap();
@@ -240,100 +346,238 @@ impl<'ctx> LLVMGenerator<'ctx> {
         }
     }
 
-    fn compile_var_decl(&self, node: &VarDecl) {
-        let val = self.compile_expr(&node.value).expect("unexpected void expr!");
-        let func = self.get_parent_func().unwrap();
-        let alloc = self.build_entry_block_alloca(func, node.def.ty, &node.def.id.name);
-        self.builder.build_store(alloc, val).unwrap();
-
-        let data = ItemData { ty: node.def.ty, ptr: alloc };
-        self.variables.borrow_mut().insert(node.def.id.name.clone(), data);
-    }
-
-    fn compile_func_prototype(&self, def: FuncDef) -> FunctionValue {
-        // Get argument types
-        let args_meta = def.params.items.iter()
-            .map(|arg| arg.def.ty.llvm_type_basic(self.ctx).into())
-            .collect::<Vec<BasicMetadataTypeEnum>>();
-
-        // Get function return type
-        let fn_ty = if def.ret.is_void() {
-            self.ctx.void_type().fn_type(args_meta.as_slice(), false)
-        } else {
-            def.ret.llvm_type_basic(self.ctx).fn_type(args_meta.as_slice(), false)
-        };
-
-        // Register function with module
-        let fn_val = self.module.add_function(def.mangled.as_str(), fn_ty, None);
-
-        // Set argument names for debugging
-        for (i, arg) in fn_val.get_param_iter().enumerate() {
-            let name = &def.params[i].def.id.name;
-            arg.set_name(name.as_str());
-        }
-
-        fn_val
-    }
-
-    fn compile_func_decl(&self, node: &FuncDecl) -> Option<FunctionValue> {
-        // Retrieve function prototype
-        let func = self.get_function(&node.def.mangled)
-            .expect("function prototypes should have already been compiled!");
-
-        // Add function block
-        let entry = self.ctx.append_basic_block(func, "entry");
-        self.builder.position_at_end(entry);
-
-        self.variables.borrow_mut().push();
-
-        // Set up param variables
-        for (i, val) in func.get_param_iter().enumerate() {
-            let param = &node.def.params[i].def;
-            let alloc = self.build_entry_block_alloca(func, param.ty, &param.id.name);
-            self.builder.build_store(alloc, val).unwrap();
-
-            let data = ItemData { ty: param.ty, ptr: alloc };
-            self.variables.borrow_mut().insert(param.id.name.clone(), data);
-        }
-
-        // Compile block
-        self.compile_block(&node.block);
-
-        self.variables.borrow_mut().pop();
-
-        // Validate function
-        if !func.verify(true) {
-            crate::log::error(Error::InvalidFunction(node.def.id.clone()))
-                .handled(self)
-                .print();
-            func.print_to_stderr();
-            unsafe { func.delete() }
-            return None;
-        }
-
-        Some(func)
-    }
-
-    fn compile_expr(&self, node: &Expr) -> Option<BasicValueEnum> {
+    fn compile_expr(&mut self, node: &Expr) -> Option<BasicValueEnum<'ctx>> {
         match node {
-            Expr::Number(val, _) => Some(self.compile_literal_num(*val).as_basic_value_enum()),
-            Expr::Bool(val, _) => Some(self.compile_literal_bool(*val).as_basic_value_enum()),
+            Expr::VarAccess(sym) => Some(self.compile_var_access(&sym)),
+            Expr::FieldAccess(expr) => Some(self.compile_field_access(&expr)),
+            Expr::FuncCall(expr) => self.compile_func_call(&expr),
+            Expr::StructInit(expr) => Some(self.compile_struct_init(&expr).into()),
+            Expr::Assign(expr) => Some(self.compile_assign(&expr)),
             Expr::UnaryOp(expr) => Some(self.compile_unary_op(&expr)),
             Expr::BinaryOp(expr) => self.compile_binary_op(&expr),
-            Expr::VarAccess(sym) => Some(self.compile_var_access(&sym)),
-            Expr::FuncCall(expr) => self.compile_func_call(&expr),
+            Expr::Number(val, _) => Some(self.compile_literal_num(*val).into()),
+            Expr::Bool(val, _) => Some(self.compile_literal_bool(*val).into()),
         }
     }
 
     #[inline]
-    fn compile_var_access(&self, sym: &SymbolRef) -> BasicValueEnum {
-        let sym = sym.mangled.borrow();
-        let sym = sym.as_ref().unwrap();
-        self.build_load(&sym.as_str())
+    fn compile_var_access(&mut self, sym: &SymbolRef) -> BasicValueEnum<'ctx> {
+        assert!(sym.mangled.is_some(), "variable '{}' not mangled!", sym.path);
+        let sym = sym.mangled.as_ref().unwrap();
+
+        let data = self.variables.find(sym.as_str())
+            .cloned()
+            .expect(&format!("undefined item: {}", sym.as_str()));
+
+        let llvm_ty = data.ty.llvm_type_basic(self.ctx);
+        self.builder.build_load(llvm_ty, data.ptr, sym.as_str()).unwrap()
     }
 
-    fn compile_unary_op(&self, node: &UnaryOp) -> BasicValueEnum {
-        let val = self.compile_expr(&node.val).expect("unexpected void expr!");
+    pub fn return_type(&self, expr: &Expr) -> Option<TypeSymbol> {
+        match expr {
+            Expr::VarAccess(sym) => {
+                let item_name = sym.mangled.as_ref().unwrap().as_str();
+                match self.variables.find(item_name) {
+                    Some(def) => Some(def.ty.ty.clone()),
+                    _ => None,
+                }
+            },
+            Expr::FieldAccess(op) => {
+                let item_ty = self.return_type(&op.item);
+                let type_name = match item_ty {
+                    Some(TypeSymbol::Struct(def)) => def.mangled.unwrap(),
+                    _ => return None,
+                };
+
+                match self.types.get(&type_name) {
+                    Some((def, _)) => {
+                        // Get accessed struct field
+                        let field = def.fields.iter()
+                            .find(|field| field.def.id == op.field);
+
+                        match field {
+                            Some(field) => Some(field.def.ty.ty.clone()),
+                            None => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            Expr::FuncCall(_) => {
+                todo!()
+                //match self.functions.find(&func.symbol.path) {
+                //    Some(ItemDef::Func(def)) => def.ret.ty.clone(),
+                //    _ => TypeSymbol::Undefined,
+                //}
+            },
+            Expr::StructInit(init) => {
+                let ty_ref = init.ty.get_symbol().unwrap();
+                let type_name = ty_ref.mangled.as_ref().unwrap();
+                Some(TypeSymbol::Struct(SymbolRef {
+                    path: ty_ref.path.clone(),
+                    mangled: Some(type_name.clone())
+                }))
+            },
+            Expr::Assign(op) => self.return_type(&op.target),
+            Expr::UnaryOp(_) => todo!(),
+            Expr::BinaryOp(_) => todo!(),
+            Expr::Number(_, _) => Some(TypeSymbol::Number),
+            Expr::Bool(_, _) => Some(TypeSymbol::Bool),
+        }
+    }
+
+    fn compile_field_access(&mut self, node: &FieldAccess) -> BasicValueEnum<'ctx> {
+        let struct_ptr = match node.item.as_ref() {
+            Expr::VarAccess(sym) => {
+                let name = sym.mangled.as_ref().unwrap();
+                match self.variables.find(name.as_str()) {
+                    Some(var) => var.ptr,
+                    None => unreachable!("unknown variable access!"),
+                }
+            }
+            _ => {
+                let item = self.compile_expr(&node.item).unwrap();
+                item.into_pointer_value()
+            },
+        };
+
+        let struct_ty = self.return_type(&node.item).unwrap();
+        assert!(matches!(struct_ty, TypeSymbol::Struct(_)), "cannot access field of type '{}'!", struct_ty);
+
+        let (def, struct_ty) = match &struct_ty {
+            TypeSymbol::Struct(def) => {
+                let ty = self.types.get(def.mangled.as_ref().unwrap());
+                match ty {
+                    Some(ret) => ret,
+                    None => unreachable!("undefined struct type!"),
+                }
+            }
+            _ => unreachable!("cannot access field of non-struct type!"),
+        };
+
+        let (idx, field) = def.fields.iter()
+            .find_position(|field| field.def.id == node.field)
+            .unwrap();
+
+        //self.builder.build_extract_value(struct_val, idx as u32, "struct.idx").unwrap()
+
+        let addr = self.builder.build_struct_gep(struct_ty.clone(), struct_ptr, idx as u32, "idx").unwrap();
+
+        let field_ty = field.def.ty.llvm_type_basic(self.ctx);
+        self.builder.build_load(field_ty, addr, &node.field.name).unwrap()
+    }
+
+    fn compile_func_call(&mut self, node: &FuncCall) -> Option<BasicValueEnum<'ctx>> {
+        let mut compiled_args = Vec::with_capacity(node.args.len());
+
+        for arg in node.args.iter() {
+            let compiled = self.compile_expr(&arg.expr).expect("unexpected void expr!");
+            compiled_args.push(compiled);
+        }
+
+        let args_meta = compiled_args.iter()
+            .map(|arg| (*arg).into())
+            .collect::<Vec<BasicMetadataValueEnum>>();
+
+        let name = node.symbol.mangled.as_ref().unwrap();
+        let func = self.get_function(&name)
+            .expect(&format!("undefined function: {}", name.as_str()));
+
+        let tag = format!("call.{}", name.as_str());
+        let call = self.builder.build_direct_call(func, args_meta.as_slice(), &tag);
+        match call {
+            Ok(call) => call.try_as_basic_value().left(),
+            Err(e) => panic!("generated invalid function call: {}", e),
+        }
+    }
+
+    fn compile_struct_init(&mut self, node: &StructInit) -> PointerValue<'ctx> {
+        assert!(matches!(*node.ty, TypeSymbol::Struct(_)), "struct field count mismatch!");
+
+        let sym = node.ty.get_symbol().unwrap();
+        let name = sym.mangled.as_ref().unwrap();
+        let (def, struct_ty) = self.types.get(name).cloned().unwrap();
+
+        assert_eq!(node.fields.len(), struct_ty.count_fields() as usize, "struct field count mismatch!");
+
+        let func = self.get_parent_func().unwrap();
+        let alloc = self.build_entry_block_alloca(func, &node.ty, &format!("struct.{name}"));
+
+        for arg in node.fields.iter() {
+            let (i, _) = def.fields.iter()
+                .find_position(|field| field.def.id == arg.id)
+                .expect("undeclared struct field!");
+            
+            let val = self.compile_expr(&arg.value).expect("unexpected void expr!");
+
+            let addr = self.builder.build_struct_gep(struct_ty, alloc, i as u32, "idx").unwrap();
+            self.builder.build_store(addr, val).unwrap();
+        }
+
+        alloc
+    }
+
+    fn compile_assign(&mut self, node: &Assign) -> BasicValueEnum<'ctx> {
+        assert!(matches!(node.target.as_ref(), Expr::VarAccess(_) | Expr::FieldAccess(_)), "invalid assignment target!");
+
+        let val = self.compile_expr(&node.value).expect("unexpected void expr!");
+
+        match node.target.as_ref() {
+            Expr::VarAccess(sym) => {
+                let data = {
+                    let sym = sym.mangled.as_ref().unwrap();
+                    self.variables.find(sym.as_str())
+                        .cloned()
+                        .expect(&format!("undefined item: {sym}"))
+                };
+
+                self.builder.build_store(data.ptr, val.clone()).unwrap();
+            }
+            Expr::FieldAccess(sym) => {
+                let struct_ptr = match sym.item.as_ref() {
+                    Expr::VarAccess(sym) => {
+                        let name = sym.mangled.as_ref().unwrap();
+                        match self.variables.find(name.as_str()) {
+                            Some(var) => var.ptr,
+                            None => unreachable!("unknown variable access!"),
+                        }
+                    }
+                    _ => {
+                        let item = self.compile_expr(&sym.item).unwrap();
+                        item.into_pointer_value()
+                    },
+                };
+
+                let struct_ty = self.return_type(&sym.item).unwrap();
+                assert!(matches!(struct_ty, TypeSymbol::Struct(_)), "cannot access field of type '{}'!", struct_ty);
+
+                let (def, struct_ty) = match &struct_ty {
+                    TypeSymbol::Struct(def) => {
+                        let ty = self.types.get(def.mangled.as_ref().unwrap());
+                        match ty {
+                            Some(ret) => ret,
+                            None => unreachable!("undefined struct type!"),
+                        }
+                    }
+                    _ => unreachable!("cannot access field of non-struct type!"),
+                };
+
+                let (idx, _) = def.fields.iter()
+                    .find_position(|field| field.def.id == sym.field)
+                    .unwrap();
+
+                let addr = self.builder.build_struct_gep(struct_ty.clone(), struct_ptr, idx as u32, "idx").unwrap();
+
+                self.builder.build_store(addr, val).unwrap();
+            }
+            _ => unreachable!("invalid assignment target!"),
+        }
+
+        val
+    }
+
+    fn compile_unary_op(&mut self, node: &UnaryOp) -> BasicValueEnum<'ctx> {
+        let val = self.compile_expr(&node.value).expect("unexpected void expr!");
         match &node.op {
             TokenType::Not => {
                 assert!(val.is_int_value(), "cannot negate non-integer values");
@@ -352,35 +596,7 @@ impl<'ctx> LLVMGenerator<'ctx> {
         }
     }
 
-    fn compile_binary_op(&self, node: &BinaryOp) -> Option<BasicValueEnum> {
-        if node.op.is_assign() {
-            assert!(matches!(node.lhs.as_ref(), Expr::VarAccess(_)), "invalid assignment target!");
-            assert_eq!(node.op, TokenType::Assign, "complex assignment should've been desugared!");
-
-            if let Expr::VarAccess(sym) = node.lhs.as_ref() {
-                let val = self.compile_expr(&node.rhs).expect("unexpected void expr!");
-
-                let data = {
-                    let sym = sym.mangled.borrow();
-                    let sym = sym.as_ref().unwrap();
-
-                    self.variables
-                        .borrow()
-                        .find(sym.as_str())
-                        .cloned()
-                        .expect(&format!("undefined item: {sym}"))
-                };
-
-                // TODO: handle complex assignment
-
-                self.builder.build_store(data.ptr, val).unwrap();
-                return None;
-            }
-            else {
-                unreachable!("invalid assignment target!");
-            }
-        }
-
+    fn compile_binary_op(&mut self, node: &BinaryOp) -> Option<BasicValueEnum<'ctx>> {
         let res = match &node.op {
             TokenType::Eq => {
                 let lhs = self.compile_expr(&node.lhs).expect("unexpected void expr!");
@@ -550,56 +766,22 @@ impl<'ctx> LLVMGenerator<'ctx> {
                     .unwrap().as_basic_value_enum()
             }
 
-            TokenType::Assign => {
-                let lhs = self.compile_expr(&node.lhs).expect("unexpected void expr!");
-                let rhs = self.compile_expr(&node.rhs).expect("unexpected void expr!");
-                assert_eq!(lhs.get_type(), rhs.get_type(), "expression type mismatch!");
-                assert!(lhs.is_float_value(), "operator '%' can only be applied to numbers!");
-                self.builder.build_float_rem(lhs.into_float_value(), rhs.into_float_value(), "frem")
-                    .unwrap().as_basic_value_enum()
-            }
-
             op => unreachable!("invalid binary op: {}", op),
         };
         Some(res)
     }
 
-    fn compile_func_call(&self, node: &FuncCall) -> Option<BasicValueEnum> {
-        let mut compiled_args = Vec::with_capacity(node.args.len());
-
-        for arg in node.args.iter() {
-            let compiled = self.compile_expr(&arg.expr).expect("unexpected void expr!");
-            compiled_args.push(compiled);
-        }
-
-        let args_meta = compiled_args.iter()
-            .map(|arg| (*arg).into())
-            .collect::<Vec<BasicMetadataValueEnum>>();
-
-        let sym = node.symbol.mangled.borrow();
-        let name = sym.as_ref().unwrap();
-        let func = self.get_function(&name)
-            .expect(&format!("undefined function: {}", name.as_str()));
-
-        let tag = format!("call.{}", name.as_str());
-        let call = self.builder.build_direct_call(func, args_meta.as_slice(), &tag);
-        match call {
-            Ok(call) => call.try_as_basic_value().left(),
-            Err(e) => panic!("generated invalid function call: {}", e),
-        }
-    }
-
     #[inline]
-    fn compile_literal_num(&self, val: f64) -> FloatValue {
+    fn compile_literal_num(&mut self, val: f64) -> FloatValue<'ctx> {
         self.ctx.f64_type().const_float(val)
     }
 
     #[inline]
-    fn compile_literal_bool(&self, val: bool) -> IntValue {
+    fn compile_literal_bool(&mut self, val: bool) -> IntValue<'ctx> {
         self.ctx.bool_type().const_int(val as u64, false)
     }
 
-    fn build_entry_block_alloca(&self, func: FunctionValue, ty: Type, name: &str) -> PointerValue<'ctx> {
+    fn build_entry_block_alloca(&self, func: FunctionValue, ty: &Type, name: &str) -> PointerValue<'ctx> {
         let builder = self.ctx.create_builder();
 
         let entry = func.get_first_basic_block().unwrap();
@@ -612,32 +794,24 @@ impl<'ctx> LLVMGenerator<'ctx> {
         builder.build_alloca(llvm_ty, name).unwrap()
     }
 
-    fn build_load(&self, name: &str) -> BasicValueEnum {
+    fn build_load(&self, name: &str) -> BasicValueEnum<'ctx> {
         let data = {
-            let defs = self.variables.borrow();
-            defs.find(name).cloned().expect(&format!("undefined item: {name}"))
+            self.variables.find(name)
+                .cloned()
+                .expect(&format!("undefined item: {name}"))
         };
 
         let llvm_ty = data.ty.llvm_type_basic(self.ctx);
-
-        if llvm_ty.is_int_type() {
-            self.builder.build_load(llvm_ty.into_int_type(), data.ptr, name).unwrap()
-        }
-        else if llvm_ty.is_float_type() {
-            self.builder.build_load(llvm_ty.into_float_type(), data.ptr, name).unwrap()
-        }
-        else {
-            panic!("unsupported load instruction type!");
-        }
+        self.builder.build_load(llvm_ty, data.ptr, name).unwrap()
     }
 
     #[inline]
-    fn get_function(&self, sym: &SymbolName) -> Option<FunctionValue> {
+    fn get_function(&self, sym: &SymbolName) -> Option<FunctionValue<'ctx>> {
         self.module.get_function(sym.as_str())
     }
 
     #[inline]
-    fn get_parent_func(&self) -> Option<FunctionValue> {
+    fn get_parent_func(&self) -> Option<FunctionValue<'ctx>> {
         self.builder.get_insert_block()
             .map_or(None, |block| block.get_parent())
     }
@@ -659,22 +833,30 @@ trait LLVMType {
     fn llvm_type_any<'ctx>(&self, ctx: &'ctx Context) -> AnyTypeEnum<'ctx>;
 }
 
-impl LLVMType for Type {
+impl LLVMType for TypeSymbol {
     fn llvm_type_basic<'ctx>(&self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
         match self {
-            Type::Undefined => panic!(""),
-            Type::Void => panic!(""),
-            Type::Number => ctx.f64_type().as_basic_type_enum(),
-            Type::Bool => ctx.bool_type().as_basic_type_enum(),
+            TypeSymbol::Struct(sym) => {
+                let name = sym.mangled.as_ref().unwrap();
+                ctx.get_struct_type(name.as_str()).unwrap().into()
+            },
+            TypeSymbol::Number => ctx.f64_type().into(),
+            TypeSymbol::Bool => ctx.bool_type().into(),
+            TypeSymbol::Void => panic!(""),
+            TypeSymbol::Undefined => panic!(""),
         }
     }
 
     fn llvm_type_any<'ctx>(&self, ctx: &'ctx Context) -> AnyTypeEnum<'ctx> {
         match self {
-            Type::Undefined => panic!(""),
-            Type::Void => ctx.void_type().as_any_type_enum(),
-            Type::Number => ctx.f64_type().as_any_type_enum(),
-            Type::Bool => ctx.bool_type().as_any_type_enum(),
+            TypeSymbol::Struct(sym) => {
+                let name = sym.mangled.as_ref().unwrap();
+                ctx.get_struct_type(name.as_str()).unwrap().into()
+            },
+            TypeSymbol::Number => ctx.f64_type().into(),
+            TypeSymbol::Bool => ctx.bool_type().into(),
+            TypeSymbol::Void => ctx.void_type().into(),
+            TypeSymbol::Undefined => panic!(""),
         }
     }
 }

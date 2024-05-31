@@ -4,21 +4,9 @@ use display_tree::{AsTree, DisplayTree, Style};
 use display_tree::to_display_tree_ref::ToDisplayTreeRef;
 use crate::ast::*;
 
-impl std::fmt::Display for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Ident ({})", self.name)
-    }
-}
-
-impl std::fmt::Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
 impl DisplayTree for Module {
     fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
-        let name = format!("{} ({})", type_name_only::<Self>(), self.def.name);
+        let name = format!("Module ({})", self.def.name);
         write_inline(name, f, style)?;
         write_tree_refs(&self.items, f, style)
     }
@@ -29,6 +17,8 @@ impl DisplayTree for Stmt {
         match self {
             Stmt::Block(block) => DisplayTree::fmt(block, f, style),
             Stmt::VarDecl(decl) => DisplayTree::fmt(decl, f, style),
+            Stmt::FuncDecl(decl) => DisplayTree::fmt(decl, f, style),
+            Stmt::StructDecl(decl) => DisplayTree::fmt(decl, f, style),
             Stmt::Branch(stmt) => DisplayTree::fmt(stmt, f, style),
             Stmt::ForLoop(stmt) => DisplayTree::fmt(stmt, f, style),
             Stmt::WhileLoop(stmt) => DisplayTree::fmt(stmt, f, style),
@@ -36,18 +26,51 @@ impl DisplayTree for Stmt {
             Stmt::Continue(stmt) => DisplayTree::fmt(stmt, f, style),
             Stmt::Break(stmt) => DisplayTree::fmt(stmt, f, style),
             Stmt::Return(stmt) => DisplayTree::fmt(stmt, f, style),
-            Stmt::FuncDecl(decl) => DisplayTree::fmt(decl, f, style),
             Stmt::Expr(expr) => DisplayTree::fmt(expr.as_ref(), f, style),
         }
     }
 }
 
+impl DisplayTree for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        write_inline(format!("Block ({})", self.id), f, style)?;
+        write_tree_refs(&self.items, f, style)
+    }
+}
+
 impl DisplayTree for VarDecl {
     fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
-        write_inline(format!("VarDecl ({}: {})", self.def.id.name, self.def.ty), f, style)?;
+        write_inline(format!("VarDecl ({}: {})", self.def.id, self.def.ty), f, style)?;
 
         let name = format!("{}", AsTree::with_style(self.value.to_display_tree(), style));
         write_branch(name, f, style, true)
+    }
+}
+
+impl DisplayTree for FuncDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        write_inline(format!("FuncDecl ({}: {})", self.def.id, self.def.ret), f, style)?;
+
+        let params = format!("{}", AsTree::with_style(self.def.params.to_display_tree(), style));
+        write_branch(params, f, style, false)?;
+
+        let name = format!("{}", AsTree::with_style(self.block.to_display_tree(), style));
+        write_branch(name, f, style, true)
+    }
+}
+
+impl DisplayTree for StructDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        write_inline(format!("StructDecl ({})", self.def.id), f, style)?;
+        write_trees(&self.def.fields, f, style)
+    }
+}
+
+impl DisplayTree for FieldDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        let mby_pub = self.is_public.then_some("pub").unwrap_or_default();
+        let detail = format!("{mby_pub} {}: {}", self.def.id, self.def.ty);
+        write_inline(format!("FieldDecl ({})", detail), f, style)
     }
 }
 
@@ -80,18 +103,6 @@ impl DisplayTree for Return {
     }
 }
 
-impl DisplayTree for FuncDecl {
-    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
-        write_inline(format!("FuncDecl ({}: {})", self.def.id.name, self.def.ret), f, style)?;
-
-        let params = format!("{}", AsTree::with_style(self.def.params.to_display_tree(), style));
-        write_branch(params, f, style, false)?;
-
-        let name = format!("{}", AsTree::with_style(self.block.to_display_tree(), style));
-        write_branch(name, f, style, true)
-    }
-}
-
 impl DisplayTree for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
         match self {
@@ -99,9 +110,12 @@ impl DisplayTree for Expr {
                 let name = format!("VarAccess ({})", sym.path);
                 write_inline(name, f, style)
             }
+            Expr::FieldAccess(op) => DisplayTree::fmt(op, f, style),
+            Expr::FuncCall(call) => DisplayTree::fmt(call, f, style),
+            Expr::StructInit(init) => DisplayTree::fmt(init, f, style),
+            Expr::Assign(op) => DisplayTree::fmt(op, f, style),
             Expr::UnaryOp(op) => DisplayTree::fmt(op, f, style),
             Expr::BinaryOp(op) => DisplayTree::fmt(op, f, style),
-            Expr::FuncCall(call) => DisplayTree::fmt(call, f, style),
             Expr::Number(val, _) => {
                 write_inline(format!("Number ({val})"), f, style)
             }
@@ -112,10 +126,33 @@ impl DisplayTree for Expr {
     }
 }
 
+impl DisplayTree for FieldAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        write_inline(format!("FieldAccess ({})", self.field), f, style)?;
+        let val = format!("{}", AsTree::with_style(self.item.to_display_tree(), style));
+        write_branch(&val, f, style, true)
+    }
+}
+
 impl DisplayTree for FuncCall {
     fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
         write_inline(format!("FuncCall ({})", self.symbol.path), f, style)?;
         write_trees(&self.args.items, f, style)
+    }
+}
+
+impl DisplayTree for StructInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        write_inline(format!("StructInit ({})", self.ty), f, style)?;
+        write_trees(&self.fields, f, style)
+    }
+}
+
+impl DisplayTree for FieldInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
+        write_inline(format!("FieldInit ({})", self.id), f, style)?;
+        let val = format!("{}", AsTree::with_style(self.value.to_display_tree(), style));
+        write_branch(&val, f, style, true)
     }
 }
 
@@ -128,7 +165,7 @@ impl DisplayTree for Params {
 
 impl DisplayTree for Param {
     fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
-        write_inline(format!("Param ({}: {})", self.def.id.name, self.def.ty), f, style)
+        write_inline(format!("Param ({}: {})", self.def.id, self.def.ty), f, style)
     }
 }
 
@@ -145,10 +182,27 @@ impl DisplayTree for Arg {
     }
 }
 
-impl DisplayTree for Block {
-    fn fmt(&self, f: &mut std::fmt::Formatter, style: Style) -> std::fmt::Result {
-        write_inline(format!("Block ({})", self.id.name), f, style)?;
-        write_tree_refs(&self.items, f, style)
+impl std::fmt::Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.ty)
+    }
+}
+
+impl std::fmt::Display for TypeSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            TypeSymbol::Struct(sym) => write!(f, "{}", sym.path),
+            TypeSymbol::Number => write!(f, "Number"),
+            TypeSymbol::Bool => write!(f, "Bool"),
+            TypeSymbol::Void => write!(f, "Void"),
+            TypeSymbol::Undefined => write!(f, "Undefined"),
+        }
     }
 }
 

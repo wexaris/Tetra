@@ -3,9 +3,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use crate::ast::*;
+use crate::log::Log;
 use crate::parse::ScopeTree;
 
-pub type Result<T> = std::result::Result<T, crate::log::Log>;
+pub type Result<T> = std::result::Result<T, Log>;
 
 pub struct Crawler {
     ctx: Rc<RefCell<ScopeTree>>,
@@ -47,6 +48,8 @@ impl Crawler {
         match x {
             Stmt::Block(block) => self.visit_block(block),
             Stmt::VarDecl(decl) => self.visit_var_decl(decl),
+            Stmt::FuncDecl(decl) => self.visit_func_decl(decl),
+            Stmt::StructDecl(decl) => self.visit_struct_decl(decl),
             Stmt::Branch(stmt) => self.visit_branch(stmt),
             Stmt::ForLoop(stmt) => self.visit_for_loop(stmt),
             Stmt::WhileLoop(stmt) => self.visit_while_loop(stmt),
@@ -54,16 +57,45 @@ impl Crawler {
             Stmt::Continue(stmt) => self.visit_continue(stmt),
             Stmt::Break(stmt) => self.visit_break(stmt),
             Stmt::Return(stmt) => self.visit_return(stmt),
-            Stmt::FuncDecl(decl) => self.visit_func_decl(decl),
             Stmt::Expr(expr) => self.visit_expr(expr),
         }
         self.for_each_layer(|v, ctx| v.visit_stmt_post(x, ctx));
+    }
+    pub fn visit_block(&mut self, x: &mut Block) {
+        self.ctx.borrow_mut().push_into(&x.id.name).unwrap();
+        self.for_each_layer(|v, ctx| v.visit_block_pre(x, ctx));
+        for item in &mut x.items {
+            self.visit_stmt(item);
+        }
+        self.for_each_layer(|v, ctx| v.visit_block_post(x, ctx));
+        self.ctx.borrow_mut().pop();
     }
     pub fn visit_var_decl(&mut self, x: &mut VarDecl) {
         self.for_each_layer(|v, ctx| v.visit_var_decl_pre(x, ctx));
         self.visit_expr(&mut x.value);
         self.ctx.borrow_mut().define_var(x.def.clone());
         self.for_each_layer(|v, ctx| v.visit_var_decl_post(x, ctx));
+    }
+    pub fn visit_func_decl(&mut self, x: &mut FuncDecl) {
+        self.ctx.borrow_mut().push_into(&x.def.id.name).unwrap();
+        self.for_each_layer(|v, ctx| v.visit_func_decl_pre(x, ctx));
+        for param in x.def.params.iter() {
+            self.ctx.borrow_mut().define_var(param.def.clone());
+        }
+        self.visit_block(&mut x.block);
+        self.for_each_layer(|v, ctx| v.visit_func_decl_post(x, ctx));
+        self.ctx.borrow_mut().pop();
+    }
+    pub fn visit_struct_decl(&mut self, x: &mut StructDecl) {
+        self.for_each_layer(|v, ctx| v.visit_struct_decl_pre(x, ctx));
+        for field in &mut x.def.fields {
+            self.visit_field_decl(field)
+        }
+        self.for_each_layer(|v, ctx| v.visit_struct_decl_post(x, ctx));
+    }
+    pub fn visit_field_decl(&mut self, x: &mut FieldDecl) {
+        self.for_each_layer(|v, ctx| v.visit_field_decl_pre(x, ctx));
+        self.for_each_layer(|v, ctx| v.visit_field_decl_post(x, ctx));
     }
     pub fn visit_branch(&mut self, x: &mut Branch) {
         self.for_each_layer(|v, ctx| v.visit_branch_pre(x, ctx));
@@ -114,24 +146,17 @@ impl Crawler {
         }
         self.for_each_layer(|v, ctx| v.visit_return_post(x, ctx));
     }
-    pub fn visit_func_decl(&mut self, x: &mut FuncDecl) {
-        self.ctx.borrow_mut().push_into(&x.def.id.name).unwrap();
-        self.for_each_layer(|v, ctx| v.visit_func_decl_pre(x, ctx));
-        for param in x.def.params.iter() {
-            self.ctx.borrow_mut().define_var(param.def.clone());
-        }
-        self.visit_block(&mut x.block);
-        self.for_each_layer(|v, ctx| v.visit_func_decl_post(x, ctx));
-        self.ctx.borrow_mut().pop();
-    }
 
     pub fn visit_expr(&mut self, x: &mut Expr) {
         self.for_each_layer(|v, ctx| v.visit_expr_pre(x, ctx));
         match x {
             Expr::VarAccess(sym) => self.visit_var_access(sym),
+            Expr::FieldAccess(op) => self.visit_field_access(op),
+            Expr::FuncCall(call) => self.visit_func_call(call),
+            Expr::StructInit(init) => self.visit_struct_init(init),
+            Expr::Assign(op) => self.visit_assign(op),
             Expr::UnaryOp(op) => self.visit_unary_op(op),
             Expr::BinaryOp(op) => self.visit_binary_op(op),
-            Expr::FuncCall(call) => self.visit_func_call(call),
             Expr::Number(val, _) => self.visit_lit_number(*val),
             Expr::Bool(val, _) => self.visit_lit_bool(*val),
         }
@@ -141,16 +166,10 @@ impl Crawler {
         self.for_each_layer(|v, ctx| v.visit_var_access_pre(x, ctx));
         self.for_each_layer(|v, ctx| v.visit_var_access_post(x, ctx));
     }
-    pub fn visit_unary_op(&mut self, x: &mut UnaryOp) {
-        self.for_each_layer(|v, ctx| v.visit_unary_op_pre(x, ctx));
-        self.visit_expr(&mut x.val);
-        self.for_each_layer(|v, ctx| v.visit_unary_op_post(x, ctx));
-    }
-    pub fn visit_binary_op(&mut self, x: &mut BinaryOp) {
-        self.for_each_layer(|v, ctx| v.visit_binary_op_pre(x, ctx));
-        self.visit_expr(&mut x.lhs);
-        self.visit_expr(&mut x.rhs);
-        self.for_each_layer(|v, ctx| v.visit_binary_op_post(x, ctx));
+    pub fn visit_field_access(&mut self, x: &mut FieldAccess) {
+        self.for_each_layer(|v, ctx| v.visit_field_access_pre(x, ctx));
+        self.visit_expr(&mut x.item);
+        self.for_each_layer(|v, ctx| v.visit_field_access_post(x, ctx));
     }
     pub fn visit_func_call(&mut self, x: &mut FuncCall) {
         self.for_each_layer(|v, ctx| v.visit_func_call_pre(x, ctx));
@@ -159,6 +178,35 @@ impl Crawler {
         }
         self.for_each_layer(|v, ctx| v.visit_func_call_post(x, ctx));
     }
+    pub fn visit_struct_init(&mut self, x: &mut StructInit) {
+        self.for_each_layer(|v, ctx| v.visit_struct_init_pre(x, ctx));
+        for field in &mut x.fields {
+            self.visit_field_init(field);
+        }
+        self.for_each_layer(|v, ctx| v.visit_struct_init_post(x, ctx));
+    }
+    pub fn visit_field_init(&mut self, x: &mut FieldInit) {
+        self.for_each_layer(|v, ctx| v.visit_field_init_pre(x, ctx));
+        self.visit_expr(&mut x.value);
+        self.for_each_layer(|v, ctx| v.visit_field_init_post(x, ctx));
+    }
+    pub fn visit_assign(&mut self, x: &mut Assign) {
+        self.for_each_layer(|v, ctx| v.visit_assign_pre(x, ctx));
+        self.visit_expr(&mut x.target);
+        self.visit_expr(&mut x.value);
+        self.for_each_layer(|v, ctx| v.visit_assign_post(x, ctx));
+    }
+    pub fn visit_unary_op(&mut self, x: &mut UnaryOp) {
+        self.for_each_layer(|v, ctx| v.visit_unary_op_pre(x, ctx));
+        self.visit_expr(&mut x.value);
+        self.for_each_layer(|v, ctx| v.visit_unary_op_post(x, ctx));
+    }
+    pub fn visit_binary_op(&mut self, x: &mut BinaryOp) {
+        self.for_each_layer(|v, ctx| v.visit_binary_op_pre(x, ctx));
+        self.visit_expr(&mut x.lhs);
+        self.visit_expr(&mut x.rhs);
+        self.for_each_layer(|v, ctx| v.visit_binary_op_post(x, ctx));
+    }
     pub fn visit_lit_number(&mut self, x: f64) {
         self.for_each_layer(|v, ctx| v.visit_lit_number_pre(x, ctx));
         self.for_each_layer(|v, ctx| v.visit_lit_number_post(x, ctx));
@@ -166,16 +214,6 @@ impl Crawler {
     pub fn visit_lit_bool(&mut self, x: bool) {
         self.for_each_layer(|v, ctx| v.visit_lit_bool_pre(x, ctx));
         self.for_each_layer(|v, ctx| v.visit_lit_bool_post(x, ctx));
-    }
-
-    pub fn visit_block(&mut self, x: &mut Block) {
-        self.ctx.borrow_mut().push_into(&x.id.name).unwrap();
-        self.for_each_layer(|v, ctx| v.visit_block_pre(x, ctx));
-        for item in &mut x.items {
-            self.visit_stmt(item);
-        }
-        self.for_each_layer(|v, ctx| v.visit_block_post(x, ctx));
-        self.ctx.borrow_mut().pop();
     }
 
     fn for_each_layer<F: FnMut(&mut dyn Visitor, Rc<RefCell<ScopeTree>>) -> Result<()>>(&mut self, mut f: F) {
@@ -209,8 +247,16 @@ pub trait Visitor {
     fn visit_module_post(&mut self, _module: &mut Module, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_stmt_pre(&mut self, _stmt: &mut Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_stmt_post(&mut self, _stmt: &mut Stmt, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_block_pre(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_block_post(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_var_decl_pre(&mut self, _decl: &mut VarDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_var_decl_post(&mut self, _decl: &mut VarDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_decl_pre(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_decl_post(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_struct_decl_pre(&mut self, _decl: &mut StructDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_struct_decl_post(&mut self, _decl: &mut StructDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_field_decl_pre(&mut self, _def: &mut FieldDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_field_decl_post(&mut self, _def: &mut FieldDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_branch_pre(&mut self, _stmt: &mut Branch, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_branch_post(&mut self, _stmt: &mut Branch, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_for_loop_pre(&mut self, _stmt: &mut ForLoop, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
@@ -225,26 +271,28 @@ pub trait Visitor {
     fn visit_break_post(&mut self, _stmt: &mut Break, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_return_pre(&mut self, _stmt: &mut Return, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_return_post(&mut self, _stmt: &mut Return, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_decl_pre(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_decl_post(&mut self, _decl: &mut FuncDecl, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-
-    fn visit_expr_pre(&mut self, _expr: &mut Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+     fn visit_expr_pre(&mut self, _expr: &mut Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_expr_post(&mut self, _expr: &mut Expr, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_var_access_pre(&mut self, _sym: &mut SymbolRef, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_var_access_post(&mut self, _sym: &mut SymbolRef, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_field_access_pre(&mut self, _sym: &mut FieldAccess, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_field_access_post(&mut self, _sym: &mut FieldAccess, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_call_pre(&mut self, _call: &mut FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_func_call_post(&mut self, _call: &mut FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_struct_init_pre(&mut self, _init: &mut StructInit, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_struct_init_post(&mut self, _init: &mut StructInit, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_field_init_pre(&mut self, _init: &mut FieldInit, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_field_init_post(&mut self, _init: &mut FieldInit, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_assign_pre(&mut self, _op: &mut Assign, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
+    fn visit_assign_post(&mut self, _op: &mut Assign, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_unary_op_pre(&mut self, _op: &mut UnaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_unary_op_post(&mut self, _op: &mut UnaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_binary_op_pre(&mut self, _op: &mut BinaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_binary_op_post(&mut self, _op: &mut BinaryOp, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_call_pre(&mut self, _call: &mut FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_func_call_post(&mut self, _call: &mut FuncCall, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_number_pre(&mut self, _val: f64, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_number_post(&mut self, _val: f64, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_bool_pre(&mut self, _val: bool, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
     fn visit_lit_bool_post(&mut self, _val: bool, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-
-    fn visit_block_pre(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
-    fn visit_block_post(&mut self, _block: &mut Block, _ctx: Rc<RefCell<ScopeTree>>) -> Result<()> { Ok(()) }
 
     #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any;

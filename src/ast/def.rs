@@ -1,8 +1,7 @@
-use display_tree::DisplayTree;
-use crate::ast::{Ident, Params, Path, SymbolName, Type};
+use crate::ast::{FieldDecl, Ident, Params, Path, SymbolName, Type};
 use crate::parse::{ScopeTree, SourceFile, Span};
 
-#[derive(DisplayTree, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ModuleDef {
     pub name: String,
     pub path: Path,
@@ -19,15 +18,25 @@ impl ModuleDef {
     }
 }
 
-#[derive(DisplayTree, Debug, Clone, Eq, PartialEq)]
-pub struct FuncDef {
-    #[field_label]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct StructDef {
     pub id: Ident,
-    #[field_label]
+    pub fields: Vec<FieldDecl>,
+    pub mangled: SymbolName,
+}
+
+impl StructDef {
+    pub fn new(id: Ident, fields: Vec<FieldDecl>, ctx: &ScopeTree) -> Self {
+        let mangled = SymbolName::func(&id, ctx);
+        Self { id, fields, mangled }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct FuncDef {
+    pub id: Ident,
     pub ret: Type,
-    #[tree]
     pub params: Params,
-    #[ignore_field]
     pub mangled: SymbolName,
 }
 
@@ -38,11 +47,9 @@ impl FuncDef {
     }
 }
 
-#[derive(DisplayTree, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VarDef {
-    #[field_label]
     pub id: Ident,
-    #[field_label]
     pub ty: Type,
 }
 

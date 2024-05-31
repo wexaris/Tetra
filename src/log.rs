@@ -131,6 +131,17 @@ impl Log {
             log::log!(self.level, "{self}");
         }
     }
+
+    #[inline]
+    pub fn is_error(&self) -> bool { self.level == Level::Error }
+    #[inline]
+    pub fn is_warn(&self) -> bool { self.level == Level::Warn }
+    #[inline]
+    pub fn is_info(&self) -> bool { self.level == Level::Info }
+    #[inline]
+    pub fn is_trace(&self) -> bool { self.level == Level::Trace }
+    #[inline]
+    pub fn is_debug(&self) -> bool { self.level == Level::Debug }
 }
 
 impl Debug for Log {

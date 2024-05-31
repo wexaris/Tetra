@@ -185,7 +185,9 @@ impl Tokenizer {
         match raw {
             "var" => Some(TokenType::Var),
             "func" => Some(TokenType::Func),
-            
+            "struct" => Some(TokenType::Struct),
+            "pub" => Some(TokenType::Pub),
+
             "if" => Some(TokenType::If),
             "else" => Some(TokenType::Else),
             "for" => Some(TokenType::For),

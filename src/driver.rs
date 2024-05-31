@@ -81,9 +81,9 @@ impl Driver {
 
         if self.args.print_ir {
             let ir_text = gen.get_module().print_to_string();
-            println!("{ir_text}");
+            println!("{}", ir_text.to_str().unwrap_or("invalid UTF-8 string"));
         }
-        
+
         self.build_output(gen.get_module())?;
         self.link()?;
 
@@ -94,28 +94,12 @@ impl Driver {
         let writer = LLVMWriter::new(module);
 
         match self.args.output {
-            Output::Executable => {
-                writer.write_obj_to_dir(&self.args.dir)?;
-            },
-            Output::LibDynamic => unimplemented!("library linking not supported yet!"),
-            Output::LibStatic => unimplemented!("library linking not supported yet!"),
-            Output::Objects => {
-                writer.write_obj_to_dir(&self.args.dir)?;
-                return Ok(());
-            }
-            Output::Assembly => {
-                writer.write_asm_to_dir(&self.args.dir)?;
-                return Ok(());
-            }
-            Output::LlvmBitCode => {
-                writer.write_bc_to_dir(&self.args.dir)?;
-                return Ok(());
-            }
-            Output::LlvmIr => {
-                writer.write_ir_to_dir(&self.args.dir)?;
-                return Ok(());
-            }
-        }
+            Output::Executable | Output::LibDynamic | Output::LibStatic | Output::Objects =>
+                writer.write_obj_to_dir(&self.args.dir)?,
+            Output::Assembly => writer.write_asm_to_dir(&self.args.dir)?,
+            Output::LlvmBitCode => writer.write_bc_to_dir(&self.args.dir)?,
+            Output::LlvmIr => writer.write_ir_to_dir(&self.args.dir)?,
+        };
 
         Ok(())
     }

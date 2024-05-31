@@ -1,4 +1,4 @@
-use crate::ast::{Ident, Path};
+use crate::ast::Ident;
 use crate::parse::FileSpan;
 use crate::parse::token::{TokenType};
 
@@ -39,8 +39,8 @@ pub enum ParseError {
     #[error("invalid target of assignment!")]
     InvalidAssignExpression,
 
-    #[error("use of undeclared variable: {0}")]
-    UndefinedVariable(Path),
+    #[error("invalid field access!")]
+    InvalidFieldAccess,
 
     #[error("path name collision: {0}")]
     PathNameCollision(Ident),
