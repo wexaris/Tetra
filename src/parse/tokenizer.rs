@@ -58,6 +58,24 @@ impl Tokenizer {
             self.bump();
         }
 
+        if self.curr_byte == b'/' {
+            if self.next_byte == b'/' {
+                while self.curr_byte != b'\r' && self.curr_byte != b'\n' && !self.is_eof() {
+                    self.bump();
+                }
+            }
+            else if self.next_byte == b'*' {
+                self.bump();
+                self.bump();
+                while self.curr_byte != b'*' && self.next_byte != b'/' && !self.is_eof() {
+                    self.bump();
+                }
+                self.bump();
+                self.bump();
+            }
+            return self.next_token();
+        }
+
         let start = self.curr_pos.clone();
 
         if self.is_eof() {
@@ -392,15 +410,15 @@ impl Tokenizer {
     }
 
     fn bump(&mut self) {
+        if self.is_eof() {
+            return;
+        }
+
         // Update index position
         self.curr_pos.idx += 1;
 
         // Update line & col position
-        if self.curr_byte == b'\r' && self.next_byte != b'\n' {
-            self.curr_pos.line += 1;
-            self.curr_pos.col = 1;
-        }
-        else if self.curr_byte == b'\n' {
+        if self.curr_byte == b'\n' || (self.curr_byte == b'\r' && self.next_byte != b'\n') {
             self.curr_pos.line += 1;
             self.curr_pos.col = 1;
         }
