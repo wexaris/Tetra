@@ -137,7 +137,7 @@ impl Parser {
         let items = {
             let mut items = Vec::new();
             while !self.is_eof() {
-                if let Some(item) = self.try_parse_stmt() {
+                if let Some(item) = self.try_parse_top_level_stmt() {
                     items.push(item)
                 }
             }
@@ -146,6 +146,37 @@ impl Parser {
 
         self.pop_scope();
         Module { def, items }
+    }
+
+    fn try_parse_top_level_stmt(&mut self) -> Option<Box<Stmt>> {
+        match self.parse_top_level_stmt() {
+            Ok(item) => Some(item),
+            Err(e) => {
+                e.print();
+                while !matches!(self.curr_tok.ty, TokenType::Func | TokenType::Struct | TokenType::Eof) {
+                    self.bump();
+                }
+                None
+            }
+        }
+    }
+
+    fn parse_top_level_stmt(&mut self) -> Result<Box<Stmt>, Log> {
+        let stmt = match &self.curr_tok.ty {
+            TokenType::Func => {
+                let decl = self.parse_func_decl()?;
+                Stmt::FuncDecl(decl)
+            }
+            TokenType::Struct => {
+                let decl = self.parse_struct_decl()?;
+                Stmt::StructDecl(decl)
+            }
+            _ => {
+                let err = self.expectation_err(&[], Some("a statement")).emit();
+                return Err(err);
+            }
+        };
+        Ok(Box::new(stmt))
     }
 
     fn try_parse_stmt(&mut self) -> Option<Box<Stmt>> {
